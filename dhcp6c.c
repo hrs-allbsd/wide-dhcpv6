@@ -1937,11 +1937,11 @@ client6_recvreply(ifp, dh6, len, optinfo)
 	 */
 	if (ifp->scriptpath != NULL && strlen(ifp->scriptpath) != 0 && !(opt_noscript && state == DHCP6S_REQUEST)) {
 	/* Do not call script if the no_script option is set and this is the response to a request. Let RTSOLD call the script */
- 		d_printf(LOG_DEBUG, FNAME, "executes %s", ifp->scriptpath);
- 		client6_script(ifp->scriptpath, state, optinfo);
+		d_printf(LOG_DEBUG, FNAME, "executes %s", ifp->scriptpath);
+		client6_script(ifp->scriptpath, state, optinfo);
 	} else {
-	  d_printf(LOG_DEBUG, FNAME, "Option no-script active, Script execution bypassed", ifp->scriptpath);
- 	}
+		d_printf(LOG_DEBUG, FNAME, "Option no-script active, Script execution bypassed", ifp->scriptpath);
+	}
 
 	dhcp6_remove_event(ev);
 
