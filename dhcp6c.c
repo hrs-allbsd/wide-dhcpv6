@@ -1771,7 +1771,7 @@ client6_recvreply(ifp, dh6, len, optinfo)
  		break;
  	case DHCP6S_SOLICIT:
 		d_printf(LOG_INFO, FNAME, "dhcp6c Received Solicit");
- 		break;                   
+ 		break;
 	}
 
 	/* A Reply message must contain a Server ID option */
