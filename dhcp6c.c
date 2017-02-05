@@ -1786,24 +1786,24 @@ client6_recvreply(ifp, dh6, len, optinfo)
 	}
 
 	switch (state) {
-	case DHCP6S_INFOREQ:
+		case DHCP6S_INFOREQ:
 		d_printf(LOG_INFO, FNAME, "Received Info");
- 		break;  
- 	case DHCP6S_REQUEST:
+		break;  
+	case DHCP6S_REQUEST:
 		d_printf(LOG_INFO, FNAME, "Received Reply");
- 		break;
- 	case DHCP6S_RENEW:
+		break;
+	case DHCP6S_RENEW:
 		d_printf(LOG_INFO, FNAME, "Received Renew");
- 		break;
- 	case DHCP6S_REBIND:
+		break;
+	case DHCP6S_REBIND:
 		d_printf(LOG_INFO, FNAME, "Received Rebind");
- 		break;
- 	case DHCP6S_RELEASE:
+		break;
+	case DHCP6S_RELEASE:
 		d_printf(LOG_INFO, FNAME, "Received Release");
- 		break;
- 	case DHCP6S_SOLICIT:
+		break;
+	case DHCP6S_SOLICIT:
 		d_printf(LOG_INFO, FNAME, "Received Advert");
- 		break;
+		break;
 	}
 
 	/* A Reply message must contain a Server ID option */
