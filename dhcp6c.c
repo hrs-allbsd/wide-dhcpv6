@@ -1786,7 +1786,7 @@ client6_recvreply(ifp, dh6, len, optinfo)
 	}
 
 	switch (state) {
-		case DHCP6S_INFOREQ:
+	case DHCP6S_INFOREQ:
 		d_printf(LOG_INFO, FNAME, "Received Info");
 		break;  
 	case DHCP6S_REQUEST:
