@@ -71,6 +71,7 @@ static char nispserver_str[] = "new_nisp_servers";
 static char nispname_str[] = "new_nisp_name";
 static char bcmcsserver_str[] = "new_bcmcs_servers";
 static char bcmcsname_str[] = "new_bcmcs_name";
+static char reason[32];
 
 int
 client6_script(scriptpath, state, optinfo)
@@ -84,9 +85,31 @@ client6_script(scriptpath, state, optinfo)
 	int nispservers, nispnamelen;
 	int bcmcsservers, bcmcsnamelen;
 	char **envp, *s;
-	char reason[] = "REASON=NBI";
 	struct dhcp6_listval *v;
 	pid_t pid, wpid;
+
+	switch(state) {
+	  case DHCP6S_INFOREQ:
+	    sprintf(reason,"REASON=INFO");
+	    break;
+	  case DHCP6S_REQUEST:
+	    sprintf(reason,"REASON=REPLY");
+	    break;
+	 case DHCP6S_RENEW:
+	    sprintf(reason,"REASON=RENEW");
+	    break;
+	case DHCP6S_REBIND:
+	    sprintf(reason,"REASON=REBIND");
+	    break;
+	case DHCP6S_RELEASE:
+	    sprintf(reason,"REASON=RELEASE");
+	    break;
+	case DHCP6S_EXIT:
+	    sprintf(reason,"REASON=EXIT");
+	    break;  
+	default:
+	    sprintf(reason,"REASON=OTHER");
+	}
 
 	/* if a script is not specified, do nothing */
 	if (scriptpath == NULL || strlen(scriptpath) == 0)
@@ -106,6 +129,10 @@ client6_script(scriptpath, state, optinfo)
 	bcmcsnamelen = 0;
 	envc = 2;     /* we at least include the reason and the terminator */
 
+	/* Not interested in other vars, skip on */
+	if(state == DHCP6S_EXIT) {
+		goto skip1;
+	}
 	/* count the number of variables */
 	for (v = TAILQ_FIRST(&optinfo->dns_list); v; v = TAILQ_NEXT(v, link))
 		dnsservers++;
@@ -165,6 +192,7 @@ client6_script(scriptpath, state, optinfo)
 	/*
 	 * Copy the parameters as environment variables
 	 */
+skip1:
 	i = 0;
 	/* reason */
 	if ((envp[i++] = strdup(reason)) == NULL) {
@@ -172,6 +200,10 @@ client6_script(scriptpath, state, optinfo)
 		    "failed to allocate reason strings");
 		ret = -1;
 		goto clean;
+	}
+	/* Not interested in other vars, skip on */
+	if(state == DHCP6S_EXIT) {
+		goto skip2;
 	}
 	/* "var=addr1 addr2 ... addrN" + null char for termination */
 	if (dnsservers) {
@@ -379,7 +411,7 @@ client6_script(scriptpath, state, optinfo)
 			strlcat(s, " ", elen);
 		}
 	}
-
+skip2:
 	/* launch the script */
 	pid = fork();
 	if (pid < 0) {
