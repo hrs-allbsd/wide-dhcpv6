@@ -73,8 +73,10 @@ dhcp6relay: $(RELAYOBJS) $(LIBOBJS)
 dhcp6ctl: $(CTLOBJS)
 	$(CC) $(LDFLAGS) -o $@ $(CTLOBJS) $(LIBOBJS) $(LIBS)
 
-cfparse.c y.tab.h: cfparse.y
+y.tab.h: cfparse.y
 	@YACC@ -d cfparse.y
+
+cfparse.c: y.tab.h cfparse.y
 	mv y.tab.c cfparse.c
 
 cftoken.c: cftoken.l y.tab.h
