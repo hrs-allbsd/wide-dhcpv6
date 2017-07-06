@@ -524,7 +524,7 @@ server6_init()
 		    strerror(errno));
 		exit(1);
 	}
-#if !defined(__linux__) && !defined(__sun__)
+#if !defined(__linux__) && !defined(__sun__) && !defined(__FreeBSD__)
 	/* make the socket write-only */
 	if (shutdown(outsock, 0)) {
 		d_printf(LOG_ERR, FNAME, "shutdown(outbound, 0): %s",
