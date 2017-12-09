@@ -2,7 +2,7 @@
 /*
  * Copyright (C) 1998 and 1999 WIDE Project.
  * All rights reserved.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -14,7 +14,7 @@
  * 3. Neither the name of the project nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -69,16 +69,16 @@
 #include <ifaddrs.h>
 #include <fcntl.h>
 
-#include "dhcp6.h"
-#include "config.h"
-#include "common.h"
-#include "timer.h"
-#include "dhcp6c.h"
-#include "control.h"
-#include "dhcp6_ctl.h"
-#include "dhcp6c_ia.h"
-#include "prefixconf.h"
-#include "auth.h"
+#include <dhcp6.h>
+#include <config.h>
+#include <common.h>
+#include <timer.h>
+#include <dhcp6c.h>
+#include <control.h>
+#include <dhcp6_ctl.h>
+#include <dhcp6c_ia.h>
+#include <prefixconf.h>
+#include <auth.h>
 
 static int debug = 0;
 static int exit_ok = 0;
@@ -89,21 +89,21 @@ static sig_atomic_t sig_flags = 0;
 
 const dhcp6_mode_t dhcp6_mode = DHCP6_MODE_CLIENT;
 
-static int sock;	/* inbound/outbound udp port */
-static int ctlsock = -1;		/* control TCP port */
-static const char *ctladdr = DEFAULT_CLIENT_CONTROL_ADDR;
-static const char *ctlport = DEFAULT_CLIENT_CONTROL_PORT;
+int sock;	/* inbound/outbound udp port */
+int ctlsock = -1;		/* control TCP port */
+char *ctladdr = DEFAULT_CLIENT_CONTROL_ADDR;
+char *ctlport = DEFAULT_CLIENT_CONTROL_PORT;
 
 #define DEFAULT_KEYFILE SYSCONFDIR "/dhcp6cctlkey"
 #define CTLSKEW 300
 
-static const char *conffile = DHCP6C_CONF;
+static char *conffile = DHCP6C_CONF;
 
 static const struct sockaddr_in6 *sa6_allagent;
 static struct duid client_duid;
-static const char *pid_file = DHCP6C_PIDFILE;
+static char *pid_file = DHCP6C_PIDFILE;
 
-static const char *ctlkeyfile = DEFAULT_KEYFILE;
+static char *ctlkeyfile = DEFAULT_KEYFILE;
 static struct keyinfo *ctlkey = NULL;
 static int ctldigestlen;
 
@@ -111,45 +111,52 @@ static int infreq_mode = 0;
 
 int opt_norelease;
 
-static void usage(void);
-static void client6_init(void);
-static void client6_startall(int);
-static void free_resources(struct dhcp6_if *);
-static void client6_mainloop(void);
-static int client6_do_ctlcommand(char *, ssize_t);
-static void client6_reload(void);
-static int client6_ifctl(char *ifname, uint16_t);
-static void check_exit(void);
-static void process_signals(void);
-static struct dhcp6_serverinfo *find_server(struct dhcp6_event *,
-						 struct duid *);
-static struct dhcp6_serverinfo *select_server(struct dhcp6_event *);
-static void client6_recv(void);
-static int client6_recvadvert(struct dhcp6_if *, struct dhcp6 *,
-				   ssize_t, struct dhcp6_optinfo *);
-static int client6_recvreply(struct dhcp6_if *, struct dhcp6 *,
-				  ssize_t, struct dhcp6_optinfo *);
-static void client6_signal(int);
-static struct dhcp6_event *find_event_withid(struct dhcp6_if *,
-						  uint32_t);
-static int construct_confdata(struct dhcp6_if *, struct dhcp6_event *);
-static int construct_reqdata(struct dhcp6_if *, struct dhcp6_optinfo *,
-    struct dhcp6_event *);
-static void destruct_iadata(struct dhcp6_eventdata *);
-static void tv_sub(struct timeval *, struct timeval *, struct timeval *);
-static struct dhcp6_timer *client6_expire_refreshtime(void *);
-static int process_auth(struct authparam *, struct dhcp6 *dh6, ssize_t,
-    struct dhcp6_optinfo *);
-static int set_auth(struct dhcp6_event *, struct dhcp6_optinfo *);
+static inline int get_val32 __P((char **, int *, u_int32_t *));
+static inline int get_ifname __P((char **, int *, char *, int));
 
-struct dhcp6_timer *client6_timo(void *);
-int client6_start(struct dhcp6_if *);
-static void info_printf(const char *, ...);
+static void usage __P((void));
+static void client6_init __P((void));
+static void client6_startall __P((int));
+static void free_resources __P((struct dhcp6_if *));
+static void client6_mainloop __P((void));
+static int client6_do_ctlcommand __P((char *, ssize_t));
+static void client6_reload __P((void));
+static int client6_ifctl __P((char *ifname, u_int16_t));
+static void check_exit __P((void));
+static void process_signals __P((void));
+static struct dhcp6_serverinfo *find_server __P((struct dhcp6_event *,
+						 struct duid *));
+static struct dhcp6_serverinfo *select_server __P((struct dhcp6_event *));
+static void client6_recv __P((void));
+static int client6_recvadvert __P((struct dhcp6_if *, struct dhcp6 *,
+				   ssize_t, struct dhcp6_optinfo *));
+static int client6_recvreply __P((struct dhcp6_if *, struct dhcp6 *,
+				  ssize_t, struct dhcp6_optinfo *));
+static void client6_signal __P((int));
+static struct dhcp6_event *find_event_withid __P((struct dhcp6_if *,
+						  u_int32_t));
+static int construct_confdata __P((struct dhcp6_if *, struct dhcp6_event *));
+static int construct_reqdata __P((struct dhcp6_if *, struct dhcp6_optinfo *,
+    struct dhcp6_event *));
+static void destruct_iadata __P((struct dhcp6_eventdata *));
+static void tv_sub __P((struct timeval *, struct timeval *, struct timeval *));
+static struct dhcp6_timer *client6_expire_refreshtime __P((void *));
+static int process_auth __P((struct authparam *, struct dhcp6 *dh6, ssize_t,
+    struct dhcp6_optinfo *));
+static int set_auth __P((struct dhcp6_event *, struct dhcp6_optinfo *));
+
+struct dhcp6_timer *client6_timo __P((void *));
+int client6_start __P((struct dhcp6_if *));
+static void info_printf __P((const char *, ...));
+
+extern int client6_script __P((char *, int, struct dhcp6_optinfo *));
 
 #define MAX_ELAPSED_TIME 0xffff
 
 int
-main(int argc, char *argv[])
+main(argc, argv)
+	int argc;
+	char **argv;
 {
 	int ch, pid;
 	char *progname;
@@ -210,7 +217,7 @@ main(int argc, char *argv[])
 	setloglevel(debug);
 
 	client6_init();
-	while (argc-- > 0) {
+	while (argc-- > 0) { 
 		if ((ifp = ifinit(argv[0])) == NULL) {
 			d_printf(LOG_ERR, FNAME, "failed to initialize %s",
 			    argv[0]);
@@ -252,7 +259,7 @@ usage()
 /*------------------------------------------------------------*/
 
 void
-client6_init(void)
+client6_init()
 {
 	struct addrinfo hints, *res;
 	static struct sockaddr_in6 sa6_allagent_storage;
@@ -392,7 +399,8 @@ client6_init(void)
 }
 
 int
-client6_start(struct dhcp6_if *ifp)
+client6_start(ifp)
+	struct dhcp6_if *ifp;
 {
 	struct dhcp6_event *ev;
 
@@ -430,7 +438,8 @@ client6_start(struct dhcp6_if *ifp)
 }
 
 static void
-client6_startall(int isrestart)
+client6_startall(isrestart)
+	int isrestart;
 {
 	struct dhcp6_if *ifp;
 
@@ -446,7 +455,8 @@ client6_startall(int isrestart)
 }
 
 static void
-free_resources(struct dhcp6_if *freeifp)
+free_resources(freeifp)
+	struct dhcp6_if *freeifp;
 {
 	struct dhcp6_if *ifp;
 
@@ -475,7 +485,7 @@ free_resources(struct dhcp6_if *freeifp)
 }
 
 static void
-check_exit(void)
+check_exit()
 {
 	struct dhcp6_if *ifp;
 
@@ -501,7 +511,7 @@ check_exit(void)
 }
 
 static void
-process_signals(void)
+process_signals()
 {
 	if ((sig_flags & SIGF_TERM)) {
 		exit_ok = 1;
@@ -525,7 +535,7 @@ process_signals(void)
 }
 
 static void
-client6_mainloop(void)
+client6_mainloop()
 {
 	struct timeval *w;
 	int ret, maxsock;
@@ -574,11 +584,37 @@ client6_mainloop(void)
 }
 
 static inline int
-get_ifname(char **bpp, int *lenp, char *ifbuf, int ifbuflen)
+get_val32(bpp, lenp, valp)
+	char **bpp;
+	int *lenp;
+	u_int32_t *valp;
+{
+	char *bp = *bpp;
+	int len = *lenp;
+	u_int32_t i32;
+
+	if (len < sizeof(*valp))
+		return (-1);
+
+	memcpy(&i32, bp, sizeof(i32));
+	*valp = ntohl(i32);
+
+	*bpp = bp + sizeof(*valp);
+	*lenp = len - sizeof(*valp);
+
+	return (0);
+}
+
+static inline int
+get_ifname(bpp, lenp, ifbuf, ifbuflen)
+	char **bpp;
+	int *lenp;
+	char *ifbuf;
+	int ifbuflen;
 {
 	char *bp = *bpp;
 	int len = *lenp, ifnamelen;
-	uint32_t i32;
+	u_int32_t i32;
 
 	if (get_val32(bpp, lenp, &i32))
 		return (-1);
@@ -599,11 +635,13 @@ get_ifname(char **bpp, int *lenp, char *ifbuf, int ifbuflen)
 }
 
 static int
-client6_do_ctlcommand(char *buf, ssize_t len)
+client6_do_ctlcommand(buf, len)
+	char *buf;
+	ssize_t len;
 {
 	struct dhcp6ctl *ctlhead;
-	uint16_t command, version;
-	uint32_t p32, ts, ts0;
+	u_int16_t command, version;
+	u_int32_t p32, ts, ts0;
 	int commandlen;
 	char *bp;
 	char ifname[IFNAMSIZ];
@@ -628,7 +666,7 @@ client6_do_ctlcommand(char *buf, ssize_t len)
 		    strerror(errno));
 		return (DHCP6CTL_R_FAILURE);
 	}
-	ts0 = (uint32_t)now;
+	ts0 = (u_int32_t)now;
 	ts = ntohl(ctlhead->timestamp);
 	if (ts + CTLSKEW < ts0 || (ts - CTLSKEW) > ts0) {
 		d_printf(LOG_INFO, FNAME, "timestamp is out of range");
@@ -718,7 +756,7 @@ client6_do_ctlcommand(char *buf, ssize_t len)
 }
 
 static void
-client6_reload(void)
+client6_reload()
 {
 	/* reload the configuration file */
 	if (cfparse(conffile) != 0) {
@@ -733,7 +771,9 @@ client6_reload(void)
 }
 
 static int
-client6_ifctl(char *ifname, uint16_t command)
+client6_ifctl(ifname, command)
+	char *ifname;
+	u_int16_t command;
 {
 	struct dhcp6_if *ifp;
 
@@ -782,7 +822,8 @@ client6_ifctl(char *ifname, uint16_t command)
 }
 
 static struct dhcp6_timer *
-client6_expire_refreshtime(void *arg)
+client6_expire_refreshtime(arg)
+	void *arg;
 {
 	struct dhcp6_if *ifp = arg;
 
@@ -796,7 +837,8 @@ client6_expire_refreshtime(void *arg)
 }
 
 struct dhcp6_timer *
-client6_timo(void *arg)
+client6_timo(arg)
+	void *arg;
 {
 	struct dhcp6_event *ev = (struct dhcp6_event *)arg;
 	struct dhcp6_if *ifp;
@@ -899,7 +941,9 @@ client6_timo(void *arg)
 }
 
 static int
-construct_confdata(struct dhcp6_if *ifp, struct dhcp6_event *ev)
+construct_confdata(ifp, ev)
+	struct dhcp6_if *ifp;
+	struct dhcp6_event *ev;
 {
 	struct ia_conf *iac;
 	struct dhcp6_eventdata *evd = NULL;
@@ -981,13 +1025,15 @@ construct_confdata(struct dhcp6_if *ifp, struct dhcp6_event *ev)
 	if (ial)
 		free(ial);
 	dhcp6_remove_event(ev);	/* XXX */
-
+	
 	return (-1);
 }
 
 static int
-construct_reqdata(struct dhcp6_if *ifp,
-    struct dhcp6_optinfo *optinfo, struct dhcp6_event *ev)
+construct_reqdata(ifp, optinfo, ev)
+	struct dhcp6_if *ifp;
+	struct dhcp6_optinfo *optinfo;
+	struct dhcp6_event *ev;
 {
 	struct ia_conf *iac;
 	struct dhcp6_eventdata *evd = NULL;
@@ -1075,12 +1121,13 @@ construct_reqdata(struct dhcp6_if *ifp,
 	if (ial)
 		free(ial);
 	dhcp6_remove_event(ev);	/* XXX */
-
+	
 	return (-1);
 }
 
 static void
-destruct_iadata(struct dhcp6_eventdata *evd)
+destruct_iadata(evd)
+	struct dhcp6_eventdata *evd;
 {
 	struct dhcp6_list *ial;
 
@@ -1095,7 +1142,8 @@ destruct_iadata(struct dhcp6_eventdata *evd)
 }
 
 static struct dhcp6_serverinfo *
-select_server(struct dhcp6_event *ev)
+select_server(ev)
+	struct dhcp6_event *ev;
 {
 	struct dhcp6_serverinfo *s;
 
@@ -1116,7 +1164,8 @@ select_server(struct dhcp6_event *ev)
 }
 
 static void
-client6_signal(int sig)
+client6_signal(sig)
+	int sig;
 {
 
 	switch (sig) {
@@ -1133,7 +1182,8 @@ client6_signal(int sig)
 }
 
 void
-client6_send(struct dhcp6_event *ev)
+client6_send(ev)
+	struct dhcp6_event *ev;
 {
 	struct dhcp6_if *ifp;
 	char buf[BUFSIZ];
@@ -1142,6 +1192,8 @@ client6_send(struct dhcp6_event *ev)
 	struct dhcp6_optinfo optinfo;
 	ssize_t optlen, len;
 	struct dhcp6_eventdata *evd;
+	/* XXX */
+	struct rawoption *rawop;
 
 	ifp = ev->ifp;
 
@@ -1249,7 +1301,7 @@ client6_send(struct dhcp6_event *ev)
 			/*
 			 * Perhaps we are nervous too much, but without this
 			 * additional check, we would see an overflow in 248
-			 * days (of no responses).
+			 * days (of no responses). 
 			 */
 			et = MAX_ELAPSED_TIME;
 		} else {
@@ -1300,6 +1352,10 @@ client6_send(struct dhcp6_event *ev)
 		    "failed to set authentication option");
 		goto end;
 	}
+	/* XXX */
+	rawop_clear_list(&optinfo.rawops);
+	rawop_copy_list(&optinfo.rawops, &ifp->rawops);
+
 
 	/* set options in the message */
 	if ((optlen = dhcp6_set_options(dh6->dh6_msgtype,
@@ -1358,7 +1414,8 @@ client6_send(struct dhcp6_event *ev)
 
 /* result will be a - b */
 static void
-tv_sub(struct timeval *a, struct timeval *b, struct timeval *result)
+tv_sub(a, b, result)
+	struct timeval *a, *b, *result;
 {
 	if (a->tv_sec < b->tv_sec ||
 	    (a->tv_sec == b->tv_sec && a->tv_usec < b->tv_usec)) {
@@ -1379,7 +1436,7 @@ tv_sub(struct timeval *a, struct timeval *b, struct timeval *result)
 }
 
 static void
-client6_recv(void)
+client6_recv()
 {
 	char rbuf[BUFSIZ], cmsgbuf[BUFSIZ];
 	struct msghdr mhdr;
@@ -1415,7 +1472,7 @@ client6_recv(void)
 		if (cm->cmsg_level == IPPROTO_IPV6 &&
 		    cm->cmsg_type == IPV6_PKTINFO &&
 		    cm->cmsg_len == CMSG_LEN(sizeof(struct in6_pktinfo))) {
-			pi = (struct in6_pktinfo *)(void *)(CMSG_DATA(cm));
+			pi = (struct in6_pktinfo *)(CMSG_DATA(cm));
 		}
 	}
 	if (pi == NULL) {
@@ -1429,7 +1486,7 @@ client6_recv(void)
 		return;
 	}
 
-	if ((size_t)len < sizeof(*dh6)) {
+	if (len < sizeof(*dh6)) {
 		d_printf(LOG_INFO, FNAME, "short packet (%d bytes)", len);
 		return;
 	}
@@ -1468,8 +1525,11 @@ client6_recv(void)
 }
 
 static int
-client6_recvadvert(struct dhcp6_if *ifp, struct dhcp6 *dh6,
-    ssize_t len, struct dhcp6_optinfo *optinfo)
+client6_recvadvert(ifp, dh6, len, optinfo)
+	struct dhcp6_if *ifp;
+	struct dhcp6 *dh6;
+	ssize_t len;
+	struct dhcp6_optinfo *optinfo;
 {
 	struct dhcp6_serverinfo *newserver, **sp;
 	struct dhcp6_event *ev;
@@ -1513,15 +1573,15 @@ client6_recvadvert(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 	 * includes a Status Code option containing the value NoPrefixAvail
 	 * [RFC3633 Section 11.1].
 	 * Likewise, the client MUST ignore any Advertise message that includes
-	 * a Status Code option containing the value NoAddrsAvail.
+	 * a Status Code option containing the value NoAddrsAvail. 
 	 * [RFC3315 Section 17.1.3].
 	 * We only apply this when we are going to request an address or
 	 * a prefix.
 	 */
 	for (evd = TAILQ_FIRST(&ev->data_list); evd;
 	    evd = TAILQ_NEXT(evd, link)) {
-		uint16_t stcode;
-		const char *stcodestr;
+		u_int16_t stcode;
+		char *stcodestr;
 
 		switch (evd->type) {
 		case DHCP6_EVDATA_IAPD:
@@ -1668,7 +1728,9 @@ client6_recvadvert(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 }
 
 static struct dhcp6_serverinfo *
-find_server(struct dhcp6_event *ev, struct duid *duid)
+find_server(ev, duid)
+	struct dhcp6_event *ev;
+	struct duid *duid;
 {
 	struct dhcp6_serverinfo *s;
 
@@ -1681,8 +1743,11 @@ find_server(struct dhcp6_event *ev, struct duid *duid)
 }
 
 static int
-client6_recvreply(struct dhcp6_if *ifp, struct dhcp6 *dh6,
-    ssize_t len, struct dhcp6_optinfo *optinfo)
+client6_recvreply(ifp, dh6, len, optinfo)
+	struct dhcp6_if *ifp;
+	struct dhcp6 *dh6;
+	ssize_t len;
+	struct dhcp6_optinfo *optinfo;
 {
 	struct dhcp6_listval *lv;
 	struct dhcp6_event *ev;
@@ -1707,8 +1772,26 @@ client6_recvreply(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 		return (-1);
 	}
 
-	d_printf(LOG_INFO, FNAME, "Received REPLY for %s",
-	    dhcp6_event_statestr(ev));
+	switch (state) {
+	case DHCP6S_INFOREQ:
+		d_printf(LOG_INFO, FNAME, "dhcp6c Received INFOREQ");
+		break;  
+	case DHCP6S_REQUEST:
+		d_printf(LOG_INFO, FNAME, "dhcp6c Received REQUEST");
+		break;
+	case DHCP6S_RENEW:
+		d_printf(LOG_INFO, FNAME, "dhcp6c Received INFO");
+		break;
+	case DHCP6S_REBIND:
+		d_printf(LOG_INFO, FNAME, "dhcp6c Received REBIND");
+		break;
+	case DHCP6S_RELEASE:
+		d_printf(LOG_INFO, FNAME, "dhcp6c Received RELEASE");
+		break;
+	case DHCP6S_SOLICIT:
+		d_printf(LOG_INFO, FNAME, "dhcp6c Received SOLICIT");
+		break;          
+	}
 
 	/* A Reply message must contain a Server ID option */
 	if (optinfo->serverID.duid_len == 0) {
@@ -1844,7 +1927,7 @@ client6_recvreply(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 				 */
 				d_printf(LOG_WARNING, FNAME,
 				    "refresh time is too large: %lu",
-				    (uint32_t)refreshtime);
+				    (u_int32_t)refreshtime);
 				tv.tv_sec = 0x7fffffff;	/* XXX */
 			}
 
@@ -1897,7 +1980,9 @@ client6_recvreply(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 }
 
 static struct dhcp6_event *
-find_event_withid(struct dhcp6_if *ifp, uint32_t xid)
+find_event_withid(ifp, xid)
+	struct dhcp6_if *ifp;
+	u_int32_t xid;
 {
 	struct dhcp6_event *ev;
 
@@ -1911,8 +1996,11 @@ find_event_withid(struct dhcp6_if *ifp, uint32_t xid)
 }
 
 static int
-process_auth(struct authparam *authparam, struct dhcp6 *dh6,
-    ssize_t len, struct dhcp6_optinfo *optinfo)
+process_auth(authparam, dh6, len, optinfo)
+	struct authparam *authparam;
+	struct dhcp6 *dh6;
+	ssize_t len;
+	struct dhcp6_optinfo *optinfo;
 {
 	struct keyinfo *key = NULL;
 	int authenticated = 0;
@@ -1964,7 +2052,7 @@ process_auth(struct authparam *authparam, struct dhcp6 *dh6,
 			 * (from Section 21.4.5.1 of RFC3315)
 			 */
 			if (optinfo->delayedauth_keyid != key->keyid ||
-			    (size_t)optinfo->delayedauth_realmlen != key->realmlen ||
+			    optinfo->delayedauth_realmlen != key->realmlen ||
 			    memcmp(optinfo->delayedauth_realmval, key->realm,
 			    key->realmlen) != 0) {
 				d_printf(LOG_INFO, FNAME,
@@ -2034,7 +2122,9 @@ process_auth(struct authparam *authparam, struct dhcp6 *dh6,
 }
 
 static int
-set_auth(struct dhcp6_event *ev, struct dhcp6_optinfo *optinfo)
+set_auth(ev, optinfo)
+	struct dhcp6_event *ev;
+	struct dhcp6_optinfo *optinfo;
 {
 	struct authparam *authparam = ev->authparam;
 

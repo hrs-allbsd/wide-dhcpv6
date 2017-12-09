@@ -41,18 +41,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* XXX */
+
+#include <stdio.h>
+#include <ctype.h>
+
 #include "dhcp6.h"
 #include "config.h"
 #include "common.h"
 
 extern int lineno;
 extern int cfdebug;
-extern int yychar;
-extern int yynerrs;
 
-void yywarn(const char *, ...)
+extern void yywarn __P((char *, ...))
 	__attribute__((__format__(__printf__, 1, 2)));
-void yyerror(const char *, ...)
+extern void yyerror __P((char *, ...))
 	__attribute__((__format__(__printf__, 1, 2)));
 
 #define MAKE_NAMELIST(l, n, p) do { \
@@ -88,29 +91,19 @@ static struct cf_namelist *iflist_head, *hostlist_head, *iapdlist_head;
 static struct cf_namelist *addrpoollist_head;
 static struct cf_namelist *authinfolist_head, *keylist_head;
 static struct cf_namelist *ianalist_head;
-
-extern struct cf_list *cf_dns_list, *cf_dns_name_list, *cf_ntp_list;
-extern struct cf_list *cf_sip_list, *cf_sip_name_list;
-extern struct cf_list *cf_nis_list, *cf_nis_name_list;
-extern struct cf_list *cf_nisp_list, *cf_nisp_name_list;
-extern struct cf_list *cf_bcmcs_list, *cf_bcmcs_name_list;
 struct cf_list *cf_dns_list, *cf_dns_name_list, *cf_ntp_list;
 struct cf_list *cf_sip_list, *cf_sip_name_list;
 struct cf_list *cf_nis_list, *cf_nis_name_list;
 struct cf_list *cf_nisp_list, *cf_nisp_name_list;
 struct cf_list *cf_bcmcs_list, *cf_bcmcs_name_list;
-
-extern long long cf_refreshtime;
 long long cf_refreshtime = -1;
 
-int yylex(void);
-int cfswitch_buffer(char *);
-static int add_namelist(struct cf_namelist *, struct cf_namelist **);
-static void cleanup(void);
-static void cleanup_namelist(struct cf_namelist *);
-static void cleanup_cflist(struct cf_list *);
-int cf_post_config(void);
-void cf_init(void);
+extern int yylex __P((void));
+extern int cfswitch_buffer __P((char *));
+static int add_namelist __P((struct cf_namelist *, struct cf_namelist **));
+static void cleanup __P((void));
+static void cleanup_namelist __P((struct cf_namelist *));
+static void cleanup_cflist __P((struct cf_list *));
 %}
 
 %token INTERFACE IFNAME
@@ -157,6 +150,9 @@ void cf_init(void);
 %type <range> rangeparam
 %type <pool> poolparam
 
+/* XXX */
+%token RAW
+
 %%
 statements:
 		/* empty */
@@ -175,7 +171,7 @@ statement:
 	;
 
 interface_statement:
-	INTERFACE IFNAME BCL declarations ECL EOS
+	INTERFACE IFNAME BCL declarations ECL EOS 
 	{
 		struct cf_namelist *ifl;
 
@@ -512,7 +508,7 @@ declarations:
 			$$ = head;
 		}
 	;
-
+	
 declaration:
 		SEND dhcpoption_list EOS
 		{
@@ -676,6 +672,63 @@ dhcpoption:
 			/* currently no value */
 			$$ = l;
 		}
+	/* XXX */
+	|	RAW NUMBER STRING
+		{		
+			struct cf_list *l;
+			struct rawoption *rawop;
+			char *tmp, *opstr = $2, *datastr = $3;
+
+			yywarn("Got raw option: %s %s", opstr, datastr);			
+			
+			if ((rawop = malloc(sizeof(*rawop))) == NULL) {
+				yywarn("can't allocate memory");
+				free(datastr);
+				free(opstr);
+				return (-1);
+			}
+			
+			/* convert op num */
+			rawop->opnum = (int)strtol(opstr, NULL, 10);
+						
+			/* convert string to lowercase */
+			tmp = datastr;
+			for ( ; *tmp; ++tmp) *tmp = tolower(*tmp);
+			
+			/* allocate buffer */
+			int len = strlen(datastr);
+			len -= len / 3; /* remove ':' from length */						
+			len = len / 2; /* byte length */			
+			rawop->datalen = len;
+			
+			if ((rawop->data = malloc(len)) == NULL) {
+				yywarn("can't allocate memory");
+				free(datastr);
+				free(opstr);
+				return (-1);
+			}
+			
+			/* convert hex string to byte array */					
+			char *h = datastr;
+			char *b = rawop->data;
+			char xlate[] = "0123456789abcdef";
+			int p1, p2, i = 0;
+
+			for ( ; *h; h += 3, ++b) { /* string is xx(:xx)\0 */
+				p1 = (int)(strchr(xlate, *h) - xlate);
+				p2 = (int)(strchr(xlate, *(h+1)) - xlate);
+				*b = (char)((p1 * 16) + p2);
+			}   
+			//free(datastr);
+			//free(opstr);
+
+			yywarn("Raw option %d length %d stored at %p with data at %p",
+				rawop->opnum, rawop->datalen, (void*)rawop, (void*)rawop->data);			
+			
+			MAKE_CFLIST(l, DHCPOPT_RAW, NULL, NULL);
+			l->ptr = rawop;
+			$$ = l;
+		}
 	|	DNS_SERVERS
 		{
 			struct cf_list *l;
@@ -761,7 +814,7 @@ dhcpoption:
 rangeparam:
 		STRING TO STRING
 		{
-			struct dhcp6_range range0, *range;
+			struct dhcp6_range range0, *range;		
 
 			memset(&range0, 0, sizeof(range0));
 			if (inet_pton(AF_INET6, $1, &range0.min) != 1) {
@@ -792,7 +845,7 @@ rangeparam:
 addressparam:
 		STRING duration
 		{
-			struct dhcp6_prefix pconf0, *pconf;
+			struct dhcp6_prefix pconf0, *pconf;		
 
 			memset(&pconf0, 0, sizeof(pconf0));
 			if (inet_pton(AF_INET6, $1, &pconf0.addr) != 1) {
@@ -806,7 +859,7 @@ addressparam:
 			if ($2 < 0)
 				pconf0.pltime = DHCP6_DURATION_INFINITE;
 			else
-				pconf0.pltime = (uint32_t)$2;
+				pconf0.pltime = (u_int32_t)$2;
 			pconf0.vltime = pconf0.pltime;
 
 			if ((pconf = malloc(sizeof(*pconf))) == NULL) {
@@ -819,7 +872,7 @@ addressparam:
 		}
 	|	STRING duration duration
 		{
-			struct dhcp6_prefix pconf0, *pconf;
+			struct dhcp6_prefix pconf0, *pconf;		
 
 			memset(&pconf0, 0, sizeof(pconf0));
 			if (inet_pton(AF_INET6, $1, &pconf0.addr) != 1) {
@@ -833,11 +886,11 @@ addressparam:
 			if ($2 < 0)
 				pconf0.pltime = DHCP6_DURATION_INFINITE;
 			else
-				pconf0.pltime = (uint32_t)$2;
+				pconf0.pltime = (u_int32_t)$2;
 			if ($3 < 0)
 				pconf0.vltime = DHCP6_DURATION_INFINITE;
 			else
-				pconf0.vltime = (uint32_t)$3;
+				pconf0.vltime = (u_int32_t)$3;
 
 			if ((pconf = malloc(sizeof(*pconf))) == NULL) {
 				yywarn("can't allocate memory");
@@ -852,7 +905,7 @@ addressparam:
 prefixparam:
 		STRING SLASH NUMBER duration
 		{
-			struct dhcp6_prefix pconf0, *pconf;
+			struct dhcp6_prefix pconf0, *pconf;		
 
 			memset(&pconf0, 0, sizeof(pconf0));
 			if (inet_pton(AF_INET6, $1, &pconf0.addr) != 1) {
@@ -866,7 +919,7 @@ prefixparam:
 			if ($4 < 0)
 				pconf0.pltime = DHCP6_DURATION_INFINITE;
 			else
-				pconf0.pltime = (uint32_t)$4;
+				pconf0.pltime = (u_int32_t)$4;
 			pconf0.vltime = pconf0.pltime;
 
 			if ((pconf = malloc(sizeof(*pconf))) == NULL) {
@@ -879,7 +932,7 @@ prefixparam:
 		}
 	|	STRING SLASH NUMBER duration duration
 		{
-			struct dhcp6_prefix pconf0, *pconf;
+			struct dhcp6_prefix pconf0, *pconf;		
 
 			memset(&pconf0, 0, sizeof(pconf0));
 			if (inet_pton(AF_INET6, $1, &pconf0.addr) != 1) {
@@ -893,11 +946,11 @@ prefixparam:
 			if ($4 < 0)
 				pconf0.pltime = DHCP6_DURATION_INFINITE;
 			else
-				pconf0.pltime = (uint32_t)$4;
+				pconf0.pltime = (u_int32_t)$4;
 			if ($5 < 0)
 				pconf0.vltime = DHCP6_DURATION_INFINITE;
 			else
-				pconf0.vltime = (uint32_t)$5;
+				pconf0.vltime = (u_int32_t)$5;
 
 			if ((pconf = malloc(sizeof(*pconf))) == NULL) {
 				yywarn("can't allocate memory");
@@ -912,7 +965,7 @@ prefixparam:
 poolparam:
 		STRING duration
 		{
-			struct dhcp6_poolspec* pool;
+			struct dhcp6_poolspec* pool;		
 
 			if ((pool = malloc(sizeof(*pool))) == NULL) {
 				yywarn("can't allocate memory");
@@ -930,14 +983,14 @@ poolparam:
 			if ($2 < 0)
 				pool->pltime = DHCP6_DURATION_INFINITE;
 			else
-				pool->pltime = (uint32_t)$2;
+				pool->pltime = (u_int32_t)$2;
 			pool->vltime = pool->pltime;
 
 			$$ = pool;
 		}
 	|	STRING duration duration
 		{
-			struct dhcp6_poolspec* pool;
+			struct dhcp6_poolspec* pool;		
 
 			if ((pool = malloc(sizeof(*pool))) == NULL) {
 				yywarn("can't allocate memory");
@@ -955,11 +1008,11 @@ poolparam:
 			if ($2 < 0)
 				pool->pltime = DHCP6_DURATION_INFINITE;
 			else
-				pool->pltime = (uint32_t)$2;
+				pool->pltime = (u_int32_t)$2;
 			if ($3 < 0)
 				pool->vltime = DHCP6_DURATION_INFINITE;
 			else
-				pool->vltime = (uint32_t)$3;
+				pool->vltime = (u_int32_t)$3;
 
 			$$ = pool;
 		}
@@ -1209,10 +1262,11 @@ keyparam:
 %%
 /* supplement routines for configuration */
 static int
-add_namelist(struct cf_namelist *new, struct cf_namelist **headp)
+add_namelist(new, headp)
+	struct cf_namelist *new, **headp;
 {
 	struct cf_namelist *n;
-
+	
 	/* check for duplicated configuration */
 	for (n = *headp; n; n = n->next) {
 		if (strcmp(n->name, new->name) == 0) {
@@ -1231,7 +1285,7 @@ add_namelist(struct cf_namelist *new, struct cf_namelist **headp)
 
 /* free temporary resources */
 static void
-cleanup(void)
+cleanup()
 {
 	cleanup_namelist(iflist_head);
 	iflist_head = NULL;
@@ -1273,7 +1327,8 @@ cleanup(void)
 }
 
 static void
-cleanup_namelist(struct cf_namelist *head)
+cleanup_namelist(head)
+	struct cf_namelist *head;
 {
 	struct cf_namelist *ifp, *ifp_next;
 
@@ -1286,7 +1341,8 @@ cleanup_namelist(struct cf_namelist *head)
 }
 
 static void
-cleanup_cflist(struct cf_list *p)
+cleanup_cflist(p)
+	struct cf_list *p;
 {
 	struct cf_list *n;
 
@@ -1310,7 +1366,7 @@ cleanup_cflist(struct cf_list *p)
 	do { cleanup(); configure_cleanup(); return (-1); } while(0)
 
 int
-cf_post_config(void)
+cf_post_config()
 {
 	if (configure_keys(keylist_head))
 		config_fail();
@@ -1343,7 +1399,7 @@ cf_post_config(void)
 #undef config_fail
 
 void
-cf_init(void)
+cf_init()
 {
 	iflist_head = NULL;
 }

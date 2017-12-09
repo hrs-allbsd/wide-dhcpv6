@@ -53,12 +53,12 @@
 #include <time.h>
 #endif
 
-#include "dhcp6.h"
-#include "config.h"
-#include "common.h"
-#include "auth.h"
-#include "base64.h"
-#include "lease.h"
+#include <dhcp6.h>
+#include <config.h>
+#include <common.h>
+#include <auth.h>
+#include <base64.h>
+#include <lease.h>
 
 extern int errno;
 
@@ -70,7 +70,7 @@ struct dhcp6_list bcmcslist, bcmcsnamelist;
 long long optrefreshtime;
 
 static struct dhcp6_ifconf *dhcp6_ifconflist;
-static struct ia_conflist ia_conflist0;
+struct ia_conflist ia_conflist0;
 static struct host_conf *host_conflist0, *host_conflist;
 static struct keyinfo *key_list, *key_list0;
 static struct authinfo *auth_list, *auth_list0;
@@ -106,6 +106,10 @@ struct dhcp6_ifconf {
 	int server_pref;	/* server preference (server only) */
 
 	char *scriptpath;	/* path to config script (client only) */
+	
+	/* XXX */
+	struct duid duid;	
+	struct rawop_list rawops;
 
 	struct dhcp6_list reqopt_list;
 	struct ia_conflist iaconf_list;
@@ -123,27 +127,26 @@ extern struct cf_list *cf_bcmcs_list, *cf_bcmcs_name_list;
 extern long long cf_refreshtime;
 extern char *configfilename;
 
-static struct keyinfo *find_keybyname(struct keyinfo *, char *);
-static int add_pd_pif(struct iapd_conf *, struct cf_list *);
-static int add_options(int, struct dhcp6_ifconf *, struct cf_list *);
-static int add_prefix(struct dhcp6_list *, const char *, int,
-    struct dhcp6_prefix *);
-static void clear_pd_pif(struct iapd_conf *);
-static void clear_ifconf(struct dhcp6_ifconf *);
-static void clear_iaconf(struct ia_conflist *);
-static void clear_hostconf(struct host_conf *);
-static void clear_keys(struct keyinfo *);
-static void clear_authinfo(struct authinfo *);
-static int configure_duid(char *, struct duid *);
-static int configure_addr(struct cf_list *, struct dhcp6_list *, const char *);
-static int configure_domain(struct cf_list *, struct dhcp6_list *,
-    const char *);
-static int get_default_ifid(struct prefix_ifconf *);
-static void clear_poolconf(struct pool_conf *);
-static struct pool_conf *create_pool(char *, struct dhcp6_range *);
-struct host_conf *find_dynamic_hostconf(struct duid *);
-static int in6_addr_cmp(struct in6_addr *, struct in6_addr *);
-static void in6_addr_inc(struct in6_addr *);
+static struct keyinfo *find_keybyname __P((struct keyinfo *, char *));
+static int add_pd_pif __P((struct iapd_conf *, struct cf_list *));
+static int add_options __P((int, struct dhcp6_ifconf *, struct cf_list *));
+static int add_prefix __P((struct dhcp6_list *, char *, int,
+    struct dhcp6_prefix *));
+static void clear_pd_pif __P((struct iapd_conf *));
+static void clear_ifconf __P((struct dhcp6_ifconf *));
+static void clear_iaconf __P((struct ia_conflist *));
+static void clear_hostconf __P((struct host_conf *));
+static void clear_keys __P((struct keyinfo *));
+static void clear_authinfo __P((struct authinfo *));
+static int configure_duid __P((char *, struct duid *));
+static int configure_addr __P((struct cf_list *, struct dhcp6_list *, char *));
+static int configure_domain __P((struct cf_list *, struct dhcp6_list *, char *));
+static int get_default_ifid __P((struct prefix_ifconf *));
+static void clear_poolconf __P((struct pool_conf *));
+static struct pool_conf *create_pool __P((char *, struct dhcp6_range *));
+struct host_conf *find_dynamic_hostconf __P((struct duid *));
+static int in6_addr_cmp __P((struct in6_addr *, struct in6_addr *));
+static void in6_addr_inc __P((struct in6_addr *));
 
 int
 configure_interface(iflist)
@@ -180,6 +183,10 @@ configure_interface(iflist)
 		TAILQ_INIT(&ifc->reqopt_list);
 		TAILQ_INIT(&ifc->iaconf_list);
 
+		/* XXX */
+		TAILQ_INIT(&ifc->rawops);
+	
+
 		for (cfl = ifp->params; cfl; cfl = cfl->next) {
 			switch(cfl->type) {
 			case DECL_REQUEST:
@@ -207,6 +214,22 @@ configure_interface(iflist)
 					goto bad;
 				}
 				break;
+			/* XXX */
+			case DECL_DUID:
+				if ((configure_duid((char *)cfl->ptr,
+						    &ifc->duid)) != 0) {
+					d_printf(LOG_ERR, FNAME, "%s:%d "
+					    "failed to configure "
+					    "DUID for %s",
+					    configfilename, cfl->line,
+					    ifc->ifname);
+					goto bad;
+				}
+				d_printf(LOG_DEBUG, FNAME,
+				    "configure DUID for %s: %s",
+				    ifc->ifname, duidstr(&ifc->duid));					
+				break;
+
 			case DECL_INFO_ONLY:
 				if (dhcp6_mode != DHCP6_MODE_CLIENT) {
 					d_printf(LOG_INFO, FNAME, "%s:%d "
@@ -356,7 +379,7 @@ configure_ia(ialist, iatype)
 
 		/* common initialization */
 		iac->type = iatype;
-		iac->iaid = (uint32_t)atoi(iap->name);
+		iac->iaid = (u_int32_t)atoi(iap->name);
 		TAILQ_INIT(&iac->iadata);
 		TAILQ_INSERT_TAIL(&ia_conflist0, iac, link);
 
@@ -481,7 +504,7 @@ add_pd_pif(iapdc, cfl0)
 	for (cfl = cfl0->list; cfl; cfl = cfl->next) {
 		switch(cfl->type) {
 		case IFPARAM_SLA_ID:
-			pif->sla_id = (uint32_t)cfl->num;
+			pif->sla_id = (u_int32_t)cfl->num;
 			break;
 		case IFPARAM_SLA_LEN:
 			pif->sla_len = (int)cfl->num;
@@ -1034,7 +1057,7 @@ static int
 configure_addr(cf_addr_list, list0, optname)
 	struct cf_list *cf_addr_list;
 	struct dhcp6_list *list0;
-	const char *optname;
+	char *optname;
 {
 	struct cf_list *cl;
 
@@ -1072,7 +1095,7 @@ static int
 configure_domain(cf_name_list, list0, optname)
 	struct cf_list *cf_name_list;
 	struct dhcp6_list *list0;
-	const char *optname;
+	char *optname;
 {
 	struct cf_list *cl;
 
@@ -1088,7 +1111,7 @@ configure_domain(cf_name_list, list0, optname)
 		char *name, *cp;
 		struct dhcp6_vbuf name_vbuf;
 
-		name = strdup((char *)cl->ptr + 1);
+		name = strdup(cl->ptr + 1);
 		if (name == NULL) {
 			d_printf(LOG_ERR, FNAME,
 			    "failed to copy a %s domain name",
@@ -1217,7 +1240,7 @@ get_default_ifid(pif)
 		if (ifa->ifa_addr->sa_family != AF_LINK)
 			continue;
 
-		sdl = (struct sockaddr_dl *)(void *)ifa->ifa_addr;
+		sdl = (struct sockaddr_dl *)ifa->ifa_addr;
 		if (sdl->sdl_alen < 6) {
 			d_printf(LOG_NOTICE, FNAME,
 			    "link layer address is too short (%s)",
@@ -1303,6 +1326,10 @@ configure_commit()
 	struct dhcp6_ifconf *ifc;
 	struct dhcp6_if *ifp;
 	struct ia_conf *iac;
+	/* XXX */
+	struct rawoption *rawop;
+
+	static int init = 1;	
 
 	/* commit interface configuration */
 	for (ifp = dhcp6_if; ifp; ifp = ifp->next) {
@@ -1311,6 +1338,15 @@ configure_commit()
 		ifp->allow_flags = 0;
 		dhcp6_clear_list(&ifp->reqopt_list);
 		clear_iaconf(&ifp->iaconf_list);
+
+		/* XXX */
+		if (init) {
+			TAILQ_INIT(&ifp->rawops);
+			init = 0;
+		} else {
+			rawop_clear_list(&ifp->rawops);			
+		}
+
 		ifp->server_pref = DH6OPT_PREF_UNDEF;
 		if (ifp->scriptpath != NULL)
 			free(ifp->scriptpath);
@@ -1346,7 +1382,27 @@ configure_commit()
 		}
 		ifp->pool = ifc->pool;
 		ifc->pool.name = NULL;
+
+		
+		/* XXX */
+		if (ifc->duid.duid_id != NULL) {
+			dprintf(LOG_INFO, FNAME, "copying duid");				
+			duidcpy(&ifp->duid, &ifc->duid);
+		}
+ 
+		dprintf(LOG_DEBUG,
+			"conf_commit: copying %d rawops from %p (ifc) to %p (ifp)",
+			rawop_count_list(&ifc->rawops), &ifc->rawops, &ifp->rawops);			
+		rawop_clear_list(&ifp->rawops);	
+		rawop_copy_list(&ifp->rawops, &ifc->rawops); // XXX: breaks if move instead of copy
+
+			
 	}
+	
+	/* XXX*/
+	rawop_clear_list(&ifc->rawops);		
+	duidfree(&ifc->duid);
+	
 
 	clear_ifconf(dhcp6_ifconflist);
 	dhcp6_ifconflist = NULL;
@@ -1546,6 +1602,9 @@ add_options(opcode, ifc, cfl0)
 	int opttype;
 	struct authinfo *ainfo;
 	struct ia_conf *iac;
+	/* XXX */
+	char *cp;
+	struct rawoption *rawopc;
 
 	for (cfl = cfl0; cfl; cfl = cfl->next) {
 		switch(cfl->type) {
@@ -1593,7 +1652,7 @@ add_options(opcode, ifc, cfl0)
 			switch (opcode) {
 			case DHCPOPTCODE_SEND:
 				iac = find_iaconf(&ia_conflist0, IATYPE_PD,
-				    (uint32_t)cfl->num);
+				    (u_int32_t)cfl->num);
 				if (iac == NULL) {
 					d_printf(LOG_ERR, FNAME, "%s:%d "
 					    "IA_PD (%lu) is not defined",
@@ -1618,7 +1677,7 @@ add_options(opcode, ifc, cfl0)
 			switch (opcode) {
 			case DHCPOPTCODE_SEND:
 				iac = find_iaconf(&ia_conflist0, IATYPE_NA,
-				    (uint32_t)cfl->num);
+				    (u_int32_t)cfl->num);
 				if (iac == NULL) {
 					d_printf(LOG_ERR, FNAME, "%s:%d "
 					    "IA_NA (%lu) is not defined",
@@ -1639,6 +1698,17 @@ add_options(opcode, ifc, cfl0)
 				break;
 			}
 			break;
+			
+		/* XXX */
+		case DHCPOPT_RAW:
+			opttype = DHCPOPT_RAW;
+			rawopc = (struct rawoption *) cfl->ptr;
+			dprintf(LOG_INFO, FNAME,
+				"add raw option: %d length: %d",
+				rawopc->opnum, rawopc->datalen);
+			TAILQ_INSERT_TAIL(&ifc->rawops, rawopc, link);	
+			break;
+	
 		case DHCPOPT_SIP:
 		case DHCPOPT_SIPNAME:
 		case DHCPOPT_DNS:
@@ -1731,7 +1801,7 @@ add_options(opcode, ifc, cfl0)
 static int
 add_prefix(head, name, type, prefix0)
 	struct dhcp6_list *head;
-	const char *name;
+	char *name;
 	int type;
 	struct dhcp6_prefix *prefix0;
 {
@@ -1807,7 +1877,7 @@ struct ia_conf *
 find_iaconf(head, type, iaid)
 	struct ia_conflist *head;
 	int type;
-	uint32_t iaid;
+	u_int32_t iaid;
 {
 	struct ia_conf *iac;
 
@@ -1875,7 +1945,7 @@ struct keyinfo *
 find_key(realm, realmlen, id)
 	char *realm;
 	size_t realmlen;
-	uint32_t id;
+	u_int32_t id;
 {
 	struct keyinfo *key;
 
@@ -1988,7 +2058,7 @@ create_dynamic_hostconf(duid, pool)
 {
 	struct dynamic_hostconf *dynconf = NULL;
 	struct host_conf *host;
-	const char *strid = NULL;
+	char* strid = NULL;
 	static int init = 1;
 
 	if (init) {
