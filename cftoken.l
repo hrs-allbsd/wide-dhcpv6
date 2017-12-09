@@ -1,6 +1,5 @@
 /*	$KAME: cftoken.l,v 1.35 2005/01/12 06:06:11 suz Exp $	*/
 
-%option noinput
 %{
 /*
  * Copyright (C) 2002 WIDE Project.
@@ -54,9 +53,6 @@
 
 #define YY_NO_UNPUT 1
 
-extern char *configfilename;
-extern int lineno;
-
 char *configfilename;
 int lineno = 1;
 
@@ -69,28 +65,24 @@ static struct include_stack {
 	YY_BUFFER_STATE state;
 	int lineno;
 } incstack[MAX_INCLUDE_DEPTH];
-static int incstackp = 0;
+int incstackp = 0;
 
 
 static int yy_first_time = 1;
 static int yyerrorcount = 0;
-
+ 
 #ifndef NOCONFIG_DEBUG
-#ifndef YYDEBUG
 #define YYDEBUG 1
-#endif
-static int cfdebug = 1;
+
+int cfdebug = 1;
 #else
-static int cfdebug = 0;
+int cfdebug = 0;
 #endif
 
-extern int yyparse(void);
-extern int cf_post_config(void);
+extern int yyparse __P((void));
+extern int cf_post_config __P((void));
 
-static void cfdebug_print(const char *, const char *, int);
-void yyerror(const char *, ...);
-void yywarn(char *, ...);
-int cfswitch_buffer(char *);
+static void cfdebug_print __P((char *, char *, int));
 
 #define DP(str) if (cfdebug) cfdebug_print(str, yytext, yyleng)
 #define DECHO if (cfdebug) cfdebug_print(NULL, yytext, yyleng);
@@ -117,6 +109,9 @@ slash		\/
 bcl		\{
 ecl		\}
 
+/* XXX */
+hexdata 	{hexpair}(:{hexpair})*
+
 %s S_CNF
 %s S_IFACE
 %s S_PREF
@@ -128,6 +123,8 @@ ecl		\}
 %s S_SECRET
 %s S_ADDRPOOL
 %s S_INCL
+/* XXX */
+%s S_RAW
 
 %%
 %{
@@ -155,7 +152,7 @@ ecl		\}
 }
 
 	/* address pool configuration */
-<S_CNF>pool { DECHO; BEGIN S_ADDRPOOL; return (ADDRPOOL); }
+<S_CNF>pool { DECHO; BEGIN S_ADDRPOOL; return (ADDRPOOL); }  
 
 <S_ADDRPOOL>{string} {
 	DECHO;
@@ -213,10 +210,19 @@ ecl		\}
 <S_CNF>bcmcs-server-address { DECHO; return (BCMCS_SERVERS); }
 <S_CNF>bcmcs-server-domain-name { DECHO; return (BCMCS_NAME); }
 <S_CNF>refreshtime { DECHO; return (REFRESHTIME); }
+	/* XXX */
+<S_CNF>raw-option { DECHO; BEGIN S_RAW; return (RAW); }
+<S_RAW>{integer} { DECHO; yylval.str = strdup(yytext); return(NUMBER); }
+<S_RAW>{hexdata} {
+	DECHO;
+	yylval.str = strdup(yytext);
+	BEGIN S_CNF;
+	return (STRING);
+}
 
 	/* provided for a backward compatibility to WIDE-DHCPv6 before Oct 1 2006 */
 <S_CNF>nis-server-domain-name { DECHO; return (NIS_NAME); }
-<S_CNF>nisp-server-domain-name { DECHO; return (NISP_NAME); }
+<S_CNF>nisp-server-domain-name { DECHO; return (NISP_NAME); }	
 
 	/* generic options */
 <S_CNF>information-only { DECHO; return (INFO_ONLY); }
@@ -343,7 +349,9 @@ ecl		\}
 
 %%
 static void
-cfdebug_print(const char *w, const char *t, int l)
+cfdebug_print(w, t, l)
+	char *w, *t;
+	int l;
 {
 	if (w) {
 		d_printf(LOG_DEBUG, FNAME,
@@ -355,7 +363,7 @@ cfdebug_print(const char *w, const char *t, int l)
 }
 
 static void
-yyerror0(int level, const char *s, va_list ap)
+yyerror0(int level, char *s, va_list ap)
 {
 	char ebuf[BUFSIZ], *bp, *ep;
 
@@ -369,7 +377,7 @@ yyerror0(int level, const char *s, va_list ap)
 }
 
 void
-yyerror(const char *s, ...)
+yyerror(char *s, ...)
 {
 	va_list ap;
 #ifdef HAVE_STDARG_H
@@ -396,7 +404,8 @@ yywarn(char *s, ...)
 }
 
 int
-cfswitch_buffer(char *incl)
+cfswitch_buffer(incl)
+	char *incl;
 {
 	char *path = qstrdup(incl);
 	FILE *fp;
@@ -428,12 +437,10 @@ cfswitch_buffer(char *incl)
 }
 
 int
-cfparse(const char *conf)
+cfparse(conf)
+	char *conf;
 {
-
-	free(configfilename);
-	configfilename = strdup(conf);
-
+	configfilename = conf;
 	if ((yyin = fopen(configfilename, "r")) == NULL) {
 		d_printf(LOG_ERR, FNAME, "cfparse: fopen(%s): %s",
 			configfilename, strerror(errno));
