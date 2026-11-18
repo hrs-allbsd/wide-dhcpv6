@@ -287,15 +287,8 @@ client6_init(void)
 		exit(1);
 	}
 
-	if ((on = fcntl(sock, F_GETFL, 0)) == -1) {
-		d_printf(LOG_ERR, FNAME, "fctnl getflags");
-		exit(1);
-	}
-
-	on |= FD_CLOEXEC;
-
-	if ((on = fcntl(sock, F_SETFL, on)) == -1) {
-		d_printf(LOG_ERR, FNAME, "fctnl setflags");
+	if (fcntl(sock, F_SETFD, FD_CLOEXEC) == -1) {
+		d_printf(LOG_ERR, FNAME, "fcntl(F_SETFD, FD_CLOEXEC)");
 		exit(1);
 	}
 
