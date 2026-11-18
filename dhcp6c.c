@@ -800,6 +800,14 @@ client6_expire_refreshtime(void *arg)
  */
 #define REFUSED_RETRY_TIME	3600
 
+/*
+ * Number of Solicit messages sent when soliciting refused IAs again.  A
+ * server that still refuses them answers with Advertise messages that the
+ * client ignores (NoAddrsAvail or NoPrefixAvail status), so give up and
+ * wait for REFUSED_RETRY_TIME again instead of soliciting forever.
+ */
+#define REFUSED_SOL_MAX_RC	5
+
 static void
 client6_retry_refused(struct dhcp6_if *ifp)
 {
@@ -833,12 +841,20 @@ static struct dhcp6_timer *
 client6_retry_refused_timo(void *arg)
 {
 	struct dhcp6_if *ifp = arg;
+	struct dhcp6_event *ev, *last;
 
 	d_printf(LOG_INFO, FNAME,
 	    "soliciting refused IAs on %s again", ifp->ifname);
 
 	dhcp6_remove_timer(&ifp->timer);
-	(void)client6_start(ifp);
+	if (client6_start(ifp) != 0)
+		return (NULL);
+
+	/* client6_start() queued it last, client6_timo() keeps the MRC */
+	last = NULL;
+	TAILQ_FOREACH(ev, &ifp->event_list, link)
+		last = ev;
+	last->max_retrans_cnt = REFUSED_SOL_MAX_RC;
 
 	return (NULL);
 }
@@ -849,6 +865,7 @@ client6_timo(void *arg)
 	struct dhcp6_event *ev = (struct dhcp6_event *)arg;
 	struct dhcp6_if *ifp;
 	int state = ev->state;
+	long mrc;
 
 	ifp = ev->ifp;
 	ev->timeouts++;
@@ -858,18 +875,27 @@ client6_timo(void *arg)
 	 * transmitted the message MRC times.
 	 * [RFC3315 14.]
 	 */
-	if (ev->max_retrans_cnt && ev->timeouts >= ev->max_retrans_cnt) {
+	if (ev->max_retrans_cnt && ev->timeouts >= ev->max_retrans_cnt &&
+	    (state != DHCP6S_SOLICIT || ev->servers == NULL)) {
 		d_printf(LOG_INFO, FNAME, "no responses were received");
 		dhcp6_remove_event(ev);
 
 		if (state == DHCP6S_RELEASE)
 			check_exit();
 
+		/*
+		 * Only the Solicit for refused IAs has a MRC, see
+		 * client6_retry_refused_timo().
+		 */
+		if (state == DHCP6S_SOLICIT && ia_bound(ifp))
+			client6_retry_refused(ifp);
+
 		return (NULL);
 	}
 
 	switch(ev->state) {
 	case DHCP6S_INIT:
+		mrc = ev->max_retrans_cnt;
 		ev->timeouts = 0; /* indicate to generate a new XID. */
 		if ((ifp->send_flags & DHCIFF_INFO_ONLY) || infreq_mode)
 			ev->state = DHCP6S_INFOREQ;
@@ -881,6 +907,8 @@ client6_timo(void *arg)
 			}
 		}
 		dhcp6_set_timeoparam(ev); /* XXX */
+		if (ev->state == DHCP6S_SOLICIT)
+			ev->max_retrans_cnt = mrc;
 		/* fall through */
 	case DHCP6S_REQUEST:
 	case DHCP6S_RELEASE:
