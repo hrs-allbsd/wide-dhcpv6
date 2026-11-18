@@ -1679,7 +1679,7 @@ client6_recvreply(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 {
 	struct dhcp6_listval *lv;
 	struct dhcp6_event *ev;
-	int state;
+	int state, iaflags;
 
 	/* find the corresponding event based on the received xid */
 	ev = find_event_withid(ifp, ntohl(dh6->dh6_xid) & DH6_XIDMASK);
@@ -1853,10 +1853,11 @@ client6_recvreply(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 	}
 
 	/* update stateful configuration information */
+	iaflags = 0;
 	if (state != DHCP6S_RELEASE) {
-		update_ia(IATYPE_PD, &optinfo->iapd_list, ifp,
+		iaflags |= update_ia(IATYPE_PD, &optinfo->iapd_list, ifp,
 		    &optinfo->serverID, ev->authparam);
-		update_ia(IATYPE_NA, &optinfo->iana_list, ifp,
+		iaflags |= update_ia(IATYPE_NA, &optinfo->iana_list, ifp,
 		    &optinfo->serverID, ev->authparam);
 	}
 
@@ -1867,6 +1868,10 @@ client6_recvreply(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 	client6_script(ifp->scriptpath, state, optinfo);
 
 	dhcp6_remove_event(ev);
+
+	/* Solicit again, once, for the IAs removed by update_ia(). */
+	if (iaflags & UPDATE_IA_REMOVED)
+		(void)client6_start(ifp);
 
 	if (state == DHCP6S_RELEASE) {
 		/*
