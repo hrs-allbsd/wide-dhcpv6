@@ -82,6 +82,7 @@ static void reestablish_ia(struct ia *);
 static void callback(struct ia *);
 static int release_ia(struct ia *);
 static void remove_ia(struct ia *);
+static void remove_ia_restart(struct ia *, int);
 static struct ia *get_ia(iatype_t, struct dhcp6_if *, struct ia_conf *,
     struct dhcp6_listval *, struct duid *);
 static struct ia *find_ia(struct ia_conf *, iatype_t, uint32_t);
@@ -90,7 +91,12 @@ static struct dhcp6_timer *ia_timo(void *);
 static const char *iastr(iatype_t);
 static const char *statestr(iastate_t);
 
-void
+/*
+ * IAs that are no longer valid are removed without soliciting again: the
+ * returned UPDATE_IA_* flags tell client6_recvreply() what was removed, and
+ * it decides once for the whole Reply whether and when to solicit again.
+ */
+int
 update_ia(iatype, ialist, ifp, serverid, authparam)
 	iatype_t iatype;
 	struct dhcp6_list *ialist;
@@ -104,8 +110,11 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 	struct iana_conf *ianac;
 	struct dhcp6_listval *iav, *siav;
 	struct timeval timo;
+	int refused, flags = 0;
 
 	for (iav = TAILQ_FIRST(ialist); iav; iav = TAILQ_NEXT(iav, link)) {
+		refused = 0;
+
 		/* if we're not interested in this IA, ignore it. */
 		if ((iac = find_iaconf(&ifp->iaconf_list, iatype,
 		    iav->val_ia.iaid)) == NULL) {
@@ -141,7 +150,8 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 			d_printf(LOG_WARNING, FNAME, "failed to update "
 			    "authentication param for IA "
 			    "type: %s, ID: %u", iastr(iac->type), iac->iaid);
-			remove_ia(ia);
+			remove_ia_restart(ia, 0);
+			flags |= UPDATE_IA_REMOVED;
 			continue;
 		}
 
@@ -175,6 +185,11 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 				    "status code for %s-%lu: %s",
 				    iastr(iatype), iav->val_ia.iaid,
 				    dhcp6_stcodestr(siav->val_num16));
+				if (siav->val_num16 ==
+				    DH6OPT_STCODE_NOADDRSAVAIL ||
+				    siav->val_num16 ==
+				    DH6OPT_STCODE_NOPREFIXAVAIL)
+					refused = 1;
 				if ((ia->state == IAS_RENEW ||
 				    ia->state == IAS_REBIND) &&
 				    siav->val_num16 == DH6OPT_STCODE_NOBINDING) {
@@ -206,7 +221,9 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 		if (ia->ctl == NULL || !(*ia->ctl->isvalid)(ia->ctl)) {
 			d_printf(LOG_DEBUG, FNAME, "IA %s-%lu is invalidated",
 			    iastr(ia->conf->type), ia->conf->iaid);
-			remove_ia(ia);
+			remove_ia_restart(ia, 0);
+			flags |= refused ? UPDATE_IA_REFUSED :
+			    UPDATE_IA_REMOVED;
 			continue;
 		}
 
@@ -264,7 +281,8 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 			if (ia->timer == NULL) {
 				d_printf(LOG_ERR, FNAME,
 				    "failed to add IA timer");
-				remove_ia(ia); /* XXX */
+				remove_ia_restart(ia, 0); /* XXX */
+				flags |= UPDATE_IA_REMOVED;
 				continue;
 			}
 			timo.tv_sec = ia->t1;
@@ -277,6 +295,8 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 	  nextia:
 		;
 	}
+
+	return (flags);
 }
 
 static int
@@ -516,6 +536,29 @@ static void
 remove_ia(ia)
 	struct ia *ia;
 {
+	remove_ia_restart(ia, 1);
+}
+
+/* Whether any IA of the interface is bound */
+int
+ia_bound(struct dhcp6_if *ifp)
+{
+	struct ia_conf *iac;
+	struct ia *ia;
+
+	TAILQ_FOREACH(iac, &ifp->iaconf_list, link) {
+		TAILQ_FOREACH(ia, &iac->iadata, link) {
+			if (ia->ctl != NULL && (*ia->ctl->isvalid)(ia->ctl))
+				return (1);
+		}
+	}
+
+	return (0);
+}
+
+static void
+remove_ia_restart(struct ia *ia, int restart)
+{
 	struct ia_conf *iac = ia->conf;
 	struct dhcp6_if *ifp = ia->ifp;
 
@@ -545,7 +588,8 @@ remove_ia(ia)
 
 	free(ia);
 
-	(void)client6_start(ifp);
+	if (restart)
+		(void)client6_start(ifp);
 }
 
 static struct dhcp6_timer *

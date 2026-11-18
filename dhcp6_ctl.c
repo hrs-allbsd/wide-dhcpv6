@@ -45,6 +45,7 @@
 
 #include <netinet/in.h>
 
+#include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -98,6 +99,12 @@ dhcp6_ctl_init(const char *addr, const char *port, int max, int *sockp)
 	ctlsock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 	if (ctlsock < 0) {
 		d_printf(LOG_ERR, FNAME, "socket(control sock): %s",
+		    strerror(errno));
+		goto fail;
+	}
+	/* Do not leak it to the scripts, it would keep the port bound */
+	if (fcntl(ctlsock, F_SETFD, FD_CLOEXEC) == -1) {
+		d_printf(LOG_ERR, FNAME, "fcntl(control sock, FD_CLOEXEC): %s",
 		    strerror(errno));
 		goto fail;
 	}
@@ -215,6 +222,14 @@ dhcp6_ctl_acceptcommand(int sl, int (*callback)(char *, ssize_t))
 
 	d_printf(LOG_DEBUG, FNAME, "accept control connection from %s",
 	    addr2str(from));
+
+	if (fcntl(s, F_SETFD, FD_CLOEXEC) == -1) {
+		d_printf(LOG_WARNING, FNAME,
+		    "fcntl(control connection, FD_CLOEXEC): %s",
+		    strerror(errno));
+		close(s);
+		return (-1);
+	}
 
 	if (max_commands <= 0) {
 		d_printf(LOG_ERR, FNAME, "command queue is not initialized");
