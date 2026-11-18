@@ -138,6 +138,8 @@ static int construct_reqdata(struct dhcp6_if *, struct dhcp6_optinfo *,
 static void destruct_iadata(struct dhcp6_eventdata *);
 static void tv_sub(struct timeval *, struct timeval *, struct timeval *);
 static struct dhcp6_timer *client6_expire_refreshtime(void *);
+static void client6_retry_refused(struct dhcp6_if *);
+static struct dhcp6_timer *client6_retry_refused_timo(void *);
 static int process_auth(struct authparam *, struct dhcp6 *dh6, ssize_t,
     struct dhcp6_optinfo *);
 static int set_auth(struct dhcp6_event *, struct dhcp6_optinfo *);
@@ -784,6 +786,59 @@ client6_expire_refreshtime(void *arg)
 
 	dhcp6_remove_timer(&ifp->timer);
 	client6_start(ifp);
+
+	return (NULL);
+}
+
+/*
+ * Delay before soliciting again IAs refused with NoAddrsAvail or
+ * NoPrefixAvail while other IAs of the interface stay bound, e.g. an IA_NA
+ * when the server only delegates prefixes.  Soliciting right away makes
+ * the server refuse them again and again, so wait for SOL_MAX_RT as defined
+ * by RFC 8415 (3600 seconds, RFC 7083).  This also gives a server that ran
+ * out of addresses or prefixes a chance to grant them later.
+ */
+#define REFUSED_RETRY_TIME	3600
+
+static void
+client6_retry_refused(struct dhcp6_if *ifp)
+{
+	struct timeval tv;
+
+	/*
+	 * The interface timer is only used for the information refresh
+	 * time otherwise, and client6_start() removes it.
+	 */
+	if (ifp->timer != NULL)
+		return;
+
+	if ((ifp->timer = dhcp6_add_timer(client6_retry_refused_timo,
+	    ifp)) == NULL) {
+		d_printf(LOG_WARNING, FNAME,
+		    "failed to add a timer for refused IAs on %s",
+		    ifp->ifname);
+		return;
+	}
+
+	tv.tv_sec = REFUSED_RETRY_TIME;
+	tv.tv_usec = 0;
+	dhcp6_set_timer(&tv, ifp->timer);
+
+	d_printf(LOG_INFO, FNAME,
+	    "soliciting refused IAs on %s again in %d seconds",
+	    ifp->ifname, REFUSED_RETRY_TIME);
+}
+
+static struct dhcp6_timer *
+client6_retry_refused_timo(void *arg)
+{
+	struct dhcp6_if *ifp = arg;
+
+	d_printf(LOG_INFO, FNAME,
+	    "soliciting refused IAs on %s again", ifp->ifname);
+
+	dhcp6_remove_timer(&ifp->timer);
+	(void)client6_start(ifp);
 
 	return (NULL);
 }
@@ -1869,9 +1924,17 @@ client6_recvreply(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 
 	dhcp6_remove_event(ev);
 
-	/* Solicit again, once, for the IAs removed by update_ia(). */
-	if (iaflags & UPDATE_IA_REMOVED)
+	/*
+	 * Solicit again, once, for the IAs removed by update_ia().  IAs the
+	 * server refused (e.g. an IA_NA when it only delegates prefixes)
+	 * while other IAs stay bound are solicited again later: right away
+	 * the server would refuse them again and again.
+	 */
+	if ((iaflags & UPDATE_IA_REMOVED) ||
+	    ((iaflags & UPDATE_IA_REFUSED) && !ia_bound(ifp)))
 		(void)client6_start(ifp);
+	else if (iaflags & UPDATE_IA_REFUSED)
+		client6_retry_refused(ifp);
 
 	if (state == DHCP6S_RELEASE) {
 		/*
