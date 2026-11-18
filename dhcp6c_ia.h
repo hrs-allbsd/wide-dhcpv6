@@ -53,7 +53,10 @@ struct iactl {
 	void (*cleanup)(struct iactl *);
 };
 
-void update_ia(iatype_t, struct dhcp6_list *,
+/* update_ia() flags */
+#define UPDATE_IA_REMOVED	0x1	/* IAs were removed */
+
+int update_ia(iatype_t, struct dhcp6_list *,
     struct dhcp6_if *, struct duid *, struct authparam *);
 void release_all_ia(struct dhcp6_if *);
 
