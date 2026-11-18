@@ -94,7 +94,7 @@ static const char *statestr(iastate_t);
 /*
  * IAs that are no longer valid are removed without soliciting again: the
  * returned UPDATE_IA_* flags tell client6_recvreply() what was removed, and
- * it decides once for the whole Reply whether to solicit again.
+ * it decides once for the whole Reply whether and when to solicit again.
  */
 int
 update_ia(iatype, ialist, ifp, serverid, authparam)
@@ -110,9 +110,11 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 	struct iana_conf *ianac;
 	struct dhcp6_listval *iav, *siav;
 	struct timeval timo;
-	int flags = 0;
+	int refused, flags = 0;
 
 	for (iav = TAILQ_FIRST(ialist); iav; iav = TAILQ_NEXT(iav, link)) {
+		refused = 0;
+
 		/* if we're not interested in this IA, ignore it. */
 		if ((iac = find_iaconf(&ifp->iaconf_list, iatype,
 		    iav->val_ia.iaid)) == NULL) {
@@ -183,6 +185,11 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 				    "status code for %s-%lu: %s",
 				    iastr(iatype), iav->val_ia.iaid,
 				    dhcp6_stcodestr(siav->val_num16));
+				if (siav->val_num16 ==
+				    DH6OPT_STCODE_NOADDRSAVAIL ||
+				    siav->val_num16 ==
+				    DH6OPT_STCODE_NOPREFIXAVAIL)
+					refused = 1;
 				if ((ia->state == IAS_RENEW ||
 				    ia->state == IAS_REBIND) &&
 				    siav->val_num16 == DH6OPT_STCODE_NOBINDING) {
@@ -215,7 +222,8 @@ update_ia(iatype, ialist, ifp, serverid, authparam)
 			d_printf(LOG_DEBUG, FNAME, "IA %s-%lu is invalidated",
 			    iastr(ia->conf->type), ia->conf->iaid);
 			remove_ia_restart(ia, 0);
-			flags |= UPDATE_IA_REMOVED;
+			flags |= refused ? UPDATE_IA_REFUSED :
+			    UPDATE_IA_REMOVED;
 			continue;
 		}
 
@@ -529,6 +537,23 @@ remove_ia(ia)
 	struct ia *ia;
 {
 	remove_ia_restart(ia, 1);
+}
+
+/* Whether any IA of the interface is bound */
+int
+ia_bound(struct dhcp6_if *ifp)
+{
+	struct ia_conf *iac;
+	struct ia *ia;
+
+	TAILQ_FOREACH(iac, &ifp->iaconf_list, link) {
+		TAILQ_FOREACH(ia, &iac->iadata, link) {
+			if (ia->ctl != NULL && (*ia->ctl->isvalid)(ia->ctl))
+				return (1);
+		}
+	}
+
+	return (0);
 }
 
 static void

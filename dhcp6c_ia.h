@@ -55,9 +55,11 @@ struct iactl {
 
 /* update_ia() flags */
 #define UPDATE_IA_REMOVED	0x1	/* IAs were removed */
+#define UPDATE_IA_REFUSED	0x2	/* IAs refused by the server were removed */
 
 int update_ia(iatype_t, struct dhcp6_list *,
     struct dhcp6_if *, struct duid *, struct authparam *);
 void release_all_ia(struct dhcp6_if *);
+int ia_bound(struct dhcp6_if *);
 
 #endif
