@@ -3,3 +3,5 @@ syntax(2)
 test_suite("wide-dhcpv6")
 
 atf_test_program{name="harness_test"}
+
+atf_test_program{name="ia_lifecycle_test"}
