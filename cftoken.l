@@ -128,6 +128,7 @@ ecl		\}
 %s S_SECRET
 %s S_ADDRPOOL
 %s S_INCL
+%x S_RAWCODE S_RAWDATA
 
 %%
 %{
@@ -187,6 +188,26 @@ ecl		\}
 
 	/* send */
 <S_CNF>send { DECHO; return (SEND); }
+<S_CNF>raw-option { DECHO; BEGIN S_RAWCODE; return (RAW_OPTION); }
+<S_RAWCODE,S_RAWDATA>{ws}|{comment} { }
+<S_RAWCODE,S_RAWDATA>{nl} { lineno++; }
+<S_RAWCODE>{integer} {
+	yylval.num = strtoll(yytext, NULL, 10);
+	BEGIN S_RAWDATA;
+	return (RAW_CODE);
+}
+	/* Raw payloads can contain authentication data. */
+<S_RAWDATA>{duid}|\"\" {
+	yylval.str = strdup(yytext[0] == '"' ? "" : yytext);
+	BEGIN S_CNF;
+	if (yylval.str == NULL)
+		return (RAW_INVALID);
+	return (RAW_DATA);
+}
+<S_RAWCODE,S_RAWDATA>[^ \t\n;,#{}]+|. {
+	BEGIN S_CNF;
+	return (RAW_INVALID);
+}
 
 	/* range */
 <S_CNF>range { DECHO; return (RANGE); }

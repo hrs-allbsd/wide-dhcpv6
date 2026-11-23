@@ -1385,6 +1385,23 @@ client6_send(struct dhcp6_event *ev)
 		goto end;
 	}
 	len += optlen;
+	if (ifp->raw_options.dv_len != 0) {
+		if (ifp->raw_auth &&
+		    optinfo.authproto != DHCP6_AUTHPROTO_UNDEF) {
+			d_printf(LOG_ERR, FNAME,
+			    "raw option 11 conflicts with DHCPv6 authentication");
+			goto end;
+		}
+		if ((size_t)ifp->raw_options.dv_len > sizeof(buf) - len) {
+			d_printf(LOG_ERR, FNAME,
+			    "raw options do not fit in the DHCPv6 message on %s",
+			    ifp->ifname);
+			goto end;
+		}
+		memcpy(buf + len, ifp->raw_options.dv_buf,
+		    ifp->raw_options.dv_len);
+		len += ifp->raw_options.dv_len;
+	}
 
 	/* calculate MAC if necessary, and put it to the message */
 	if (ev->authparam != NULL) {

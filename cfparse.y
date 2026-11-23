@@ -133,7 +133,7 @@ void cf_init(void);
 %token INCLUDE
 
 %token NUMBER SLASH EOS BCL ECL STRING QSTRING PREFIX INFINITY
-%token COMMA
+%token COMMA RAW_OPTION RAW_CODE RAW_DATA RAW_INVALID
 
 %union {
 	long long num;
@@ -146,7 +146,9 @@ void cf_init(void);
 
 %type <str> IFNAME HOSTNAME AUTHNAME KEYNAME DUID_ID STRING QSTRING IAID
 %type <str> POOLNAME
-%type <num> NUMBER duration authproto authalg authrdm
+%type <num> NUMBER duration authproto authalg authrdm RAW_CODE
+%type <str> RAW_DATA
+%destructor { free($$); } RAW_DATA
 %type <list> declaration declarations dhcpoption ifparam ifparams
 %type <list> address_list address_list_ent dhcpoption_list
 %type <list> iapdconf_list iapdconf prefix_interface
@@ -628,7 +630,15 @@ dhcpoption_list:
 	;
 
 dhcpoption:
-		RAPID_COMMIT
+		RAW_OPTION RAW_CODE RAW_DATA
+		{
+			struct cf_list *l;
+
+			MAKE_CFLIST(l, DHCPOPT_RAW, $3, NULL);
+			l->num = $2;
+			$$ = l;
+		}
+	|	RAPID_COMMIT
 		{
 			struct cf_list *l;
 

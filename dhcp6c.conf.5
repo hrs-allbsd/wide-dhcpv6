@@ -128,6 +128,29 @@ option.
 .Ar ID
 is a decimal number of the IAID
 .Pq see below about identity associations .
+.It Ic raw-option Ar code Ar payload
+sends an opaque DHCPv6 option.
+.Ar code
+is a decimal option number from 1 through 65535.
+.Ar payload
+is a colon-separated list of two-digit hexadecimal octets, for example
+.Li 00:03:61:62:63 ,
+or
+.Li \&""
+for a zero-length payload.
+Include any option-specific fields in the payload.
+.Nm dhcp6c
+adds the DHCPv6 option code and the outer length.
+This option is available in client
+.Ic send
+statements and applies to every outgoing message on that interface.
+Each raw code may appear once per interface.
+Client ID, Server ID, IA options, Option Request, Elapsed Time and
+Rapid Commit are managed by the client and cannot be specified here.
+Raw option 11 cannot be combined with configured DHCPv6 authentication.
+Keep configuration files with sensitive payloads private.
+If the options do not fit in the outgoing message buffer, the
+message is not sent.
 .It Ic rapid-commit
 means a rapid-commit option.
 .It Ic authentication Ar authname

@@ -35,6 +35,7 @@
 
 #include <net/if.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #ifdef __KAME__
 #include <net/if_dl.h>
 #endif
@@ -43,6 +44,7 @@
 #endif
 
 #include <syslog.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -106,6 +108,8 @@ struct dhcp6_ifconf {
 	int server_pref;	/* server preference (server only) */
 
 	char *scriptpath;	/* path to config script (client only) */
+	struct dhcp6_vbuf raw_options;
+	int raw_auth;
 
 	struct dhcp6_list reqopt_list;
 	struct ia_conflist iaconf_list;
@@ -306,8 +310,14 @@ configure_interface(iflist)
 				goto bad;
 			}
 		}
+		if (ifc->raw_auth && ifc->authinfo != NULL) {
+			d_printf(LOG_ERR, FNAME,
+			    "%s:%d raw option 11 conflicts with authentication on %s",
+			    configfilename, ifp->line, ifc->ifname);
+			goto bad;
+		}
 	}
-	
+
 	return (0);
 
   bad:
@@ -1310,6 +1320,8 @@ configure_commit()
 		ifp->send_flags = 0;
 		ifp->allow_flags = 0;
 		dhcp6_clear_list(&ifp->reqopt_list);
+		dhcp6_vbuf_free(&ifp->raw_options);
+		ifp->raw_auth = 0;
 		clear_iaconf(&ifp->iaconf_list);
 		ifp->server_pref = DH6OPT_PREF_UNDEF;
 		if (ifp->scriptpath != NULL)
@@ -1338,6 +1350,10 @@ configure_commit()
 		ifp->server_pref = ifc->server_pref;
 		ifp->scriptpath = ifc->scriptpath;
 		ifc->scriptpath = NULL;
+		ifp->raw_options = ifc->raw_options;
+		ifp->raw_auth = ifc->raw_auth;
+		ifc->raw_options.dv_buf = NULL;
+		ifc->raw_options.dv_len = 0;
 
 		if (ifc->authinfo != NULL) {
 			ifp->authproto = ifc->authinfo->protocol;
@@ -1436,6 +1452,7 @@ clear_ifconf(iflist)
 
 		free(ifc->ifname);
 		dhcp6_clear_list(&ifc->reqopt_list);
+		dhcp6_vbuf_free(&ifc->raw_options);
 
 		clear_iaconf(&ifc->iaconf_list);
 
@@ -1537,6 +1554,75 @@ clear_authinfo(alist)
 }
 
 static int
+add_raw_option(struct dhcp6_ifconf *ifc, const struct cf_list *cfl)
+{
+	struct dhcp6opt header;
+	struct dhcp6_vbuf *options = &ifc->raw_options;
+	const char *hex = cfl->ptr;
+	char pair[3] = { 0 }, *buffer;
+	size_t bytes, i, len, offset, size;
+
+	switch (cfl->num) {
+	case DH6OPT_CLIENTID:
+	case DH6OPT_SERVERID:
+	case DH6OPT_IA_NA:
+	case DH6OPT_IA_TA:
+	case DH6OPT_IAADDR:
+	case DH6OPT_ORO:
+	case DH6OPT_ELAPSED_TIME:
+	case DH6OPT_RAPID_COMMIT:
+	case DH6OPT_IA_PD:
+	case DH6OPT_IA_PD_PREFIX:
+		goto invalid;
+	}
+	if (cfl->num < 1 || cfl->num > UINT16_MAX)
+		goto invalid;
+
+	len = strlen(hex);
+	bytes = len == 0 ? 0 : len / 3 + 1;
+	size = options->dv_len;
+	if (bytes > UINT16_MAX ||
+	    size + sizeof(header) + bytes > BUFSIZ - sizeof(struct dhcp6)) {
+		d_printf(LOG_ERR, FNAME, "%s:%d raw option data exceeds send buffer",
+		    configfilename, cfl->line);
+		return (-1);
+	}
+	for (offset = 0; offset < size;
+	    offset += sizeof(header) + ntohs(header.dh6opt_len)) {
+		memcpy(&header, options->dv_buf + offset, sizeof(header));
+		if (ntohs(header.dh6opt_type) == cfl->num) {
+			d_printf(LOG_ERR, FNAME, "%s:%d duplicate raw option %lld",
+			    configfilename, cfl->line, cfl->num);
+			return (-1);
+		}
+	}
+	buffer = realloc(options->dv_buf, size + sizeof(header) + bytes);
+	if (buffer == NULL) {
+		d_printf(LOG_ERR, FNAME, "%s:%d cannot allocate raw option",
+		    configfilename, cfl->line);
+		return (-1);
+	}
+	header.dh6opt_type = htons((uint16_t)cfl->num);
+	header.dh6opt_len = htons((uint16_t)bytes);
+	memcpy(buffer + size, &header, sizeof(header));
+	for (i = 0; i < bytes; i++) {
+		memcpy(pair, hex + i * 3, 2);
+		((unsigned char *)buffer)[size + sizeof(header) + i] =
+		    (unsigned char)strtoul(pair, NULL, 16);
+	}
+	options->dv_buf = buffer;
+	options->dv_len = size + sizeof(header) + bytes;
+	if (cfl->num == DH6OPT_AUTH)
+		ifc->raw_auth = 1;
+	return (0);
+
+invalid:
+	d_printf(LOG_ERR, FNAME, "%s:%d invalid raw option code %lld",
+	    configfilename, cfl->line, cfl->num);
+	return (-1);
+}
+
+static int
 add_options(opcode, ifc, cfl0)
 	int opcode;
 	struct dhcp6_ifconf *ifc;
@@ -1549,6 +1635,17 @@ add_options(opcode, ifc, cfl0)
 
 	for (cfl = cfl0; cfl; cfl = cfl->next) {
 		switch(cfl->type) {
+		case DHCPOPT_RAW:
+			if (dhcp6_mode != DHCP6_MODE_CLIENT ||
+			    opcode != DHCPOPTCODE_SEND) {
+				d_printf(LOG_ERR, FNAME,
+				    "%s:%d raw options require client send",
+				    configfilename, cfl->line);
+				return (-1);
+			}
+			if (add_raw_option(ifc, cfl) != 0)
+				return (-1);
+			break;
 		case DHCPOPT_RAPID_COMMIT:
 			switch (opcode) {
 			case DHCPOPTCODE_SEND:
