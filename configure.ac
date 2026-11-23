@@ -5,6 +5,20 @@ dnl Checks for programs.
 AC_PROG_INSTALL
 AC_PROG_MAKE_SET
 AC_PROG_CC
+
+dnl glibc exposes struct in6_pktinfo only with GNU extensions.
+AC_CACHE_CHECK([whether the C library is glibc], [wide_cv_libc_glibc], [
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#include <features.h>
+#ifndef __GLIBC__
+#error not glibc
+#endif
+  ]], [[]])], [wide_cv_libc_glibc=yes], [wide_cv_libc_glibc=no])
+])
+AS_IF([test "x$wide_cv_libc_glibc" = xyes], [
+  AC_DEFINE([_GNU_SOURCE], [1], [Expose glibc GNU extensions.])
+])
+
 AC_PROG_CPP
 AC_PROG_YACC
 AC_PROG_LEX

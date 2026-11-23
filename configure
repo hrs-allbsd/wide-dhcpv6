@@ -3212,6 +3212,48 @@ ac_compile='$CC -c $CFLAGS $CPPFLAGS conftest.$ac_ext >&5'
 ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $LIBS >&5'
 ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
+
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether the C library is glibc" >&5
+$as_echo_n "checking whether the C library is glibc... " >&6; }
+if ${wide_cv_libc_glibc+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#include <features.h>
+#ifndef __GLIBC__
+#error not glibc
+#endif
+
+int
+main ()
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  wide_cv_libc_glibc=yes
+else
+  wide_cv_libc_glibc=no
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $wide_cv_libc_glibc" >&5
+$as_echo "$wide_cv_libc_glibc" >&6; }
+if test "x$wide_cv_libc_glibc" = xyes; then :
+
+
+$as_echo "#define _GNU_SOURCE 1" >>confdefs.h
+
+
+fi
+
 ac_ext=c
 ac_cpp='$CPP $CPPFLAGS'
 ac_compile='$CC -c $CFLAGS $CPPFLAGS conftest.$ac_ext >&5'
@@ -3391,7 +3433,6 @@ fi
   test -n "$YACC" && break
 done
 test -n "$YACC" || YACC="yacc"
-
 
 for ac_prog in flex lex
 do
