@@ -1,0 +1,36 @@
+--- dhcp6s.c
++++ dhcp6s.c
+@@ -1320,7 +1320,8 @@
+ 		TAILQ_INIT(&conflist);
+ 
+ 		/* make a local copy of the configured addresses */
+-		if (client_conf &&
++		/* Offer IA_NA initially so Request can explicitly refuse it. */
++		if (client_conf && !TAILQ_EMPTY(&optinfo->iapd_list) &&
+ 		    dhcp6_copy_list(&conflist, &client_conf->addr_list)) {
+ 			d_printf(LOG_NOTICE, FNAME,
+ 			    "failed to make local data");
+@@ -1549,17 +1550,12 @@
+ 			 * removing the adopted addresses from the list.
+ 			 * The addresses will be bound to the client.
+ 			 */
+-			if (make_ia(iana, &conflist, &roptinfo.iana_list,
+-			    client_conf, 1) == 0) {
+-				if (make_ia_stcode(DHCP6_LISTVAL_IANA,
+-				    iana->val_ia.iaid,
+-				    DH6OPT_STCODE_NOADDRSAVAIL,
+-				    &roptinfo.iana_list)) {
+-					d_printf(LOG_NOTICE, FNAME,
+-					    "failed to make an option list");
+-					dhcp6_clear_list(&conflist);
+-					goto fail;
+-				}
++			/* Always return an IA_NA with nested NoAddrsAvail. */
++			if (make_ia_stcode(DHCP6_LISTVAL_IANA,
++			    iana->val_ia.iaid, DH6OPT_STCODE_NOADDRSAVAIL,
++			    &roptinfo.iana_list)) {
++				dhcp6_clear_list(&conflist);
++				goto fail;
+ 			}
+ 		}
+ 

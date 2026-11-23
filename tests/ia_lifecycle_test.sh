@@ -40,6 +40,7 @@ interface_restart_body()
 	net_loopback "$client"
 	printf '%s\n' 'Y3RsLXRlc3Qta2V5' > "$net/client/run/control.key"
 	start_lease_exchange /run/control.key
+	wait_until 15 "installation of the IA_NA address and IA_PD subnet" leases_acquired
 	verify_interface_restart
 }
 
@@ -52,6 +53,13 @@ atf_test_case raw_option cleanup
 raw_option_head()
 {
 	atf_set "descr" "Check raw option bytes on the wire during the DHCPv6 lifecycle"
+	lifecycle_head capture
+}
+
+atf_test_case refused_retry cleanup
+refused_retry_head()
+{
+	atf_set "descr" "Keep IA_PD while limiting delayed retries for refused IA_NA"
 	lifecycle_head capture
 }
 
@@ -84,7 +92,7 @@ fail_with_logs()
 {
 	local log
 
-	for log in "$net/server.log" "$net/client.log" "$net/capture.log"; do
+	for log in "$net/server.log" "$net/client.log" "$net/capture.log" "$net/retry-wire.txt"; do
 		if [ -f "$log" ]; then
 			printf '\n--- %s ---\n' "${log##*/}" >&2
 			tail -60 "$log" >&2
@@ -276,7 +284,7 @@ leases_released()
 
 lifecycle_setup()
 {
-	local binary
+	local client_binary="${1:-dhcp6c}" server_binary="${2:-dhcp6s}" binary
 
 	load_network_backend || atf_skip "Requires FreeBSD or Linux"
 	net_require
@@ -287,7 +295,11 @@ lifecycle_setup()
 	/*) ;;
 	*) atf_fail "DHCP6_TEST_BINDIR must be an absolute path" ;;
 	esac
-	for binary in dhcp6c dhcp6s; do
+	for binary in "$client_binary" "$server_binary"; do
+		if [ "$binary" != dhcp6c ] && [ "$binary" != dhcp6s ] &&
+		    [ ! -x "$bindir/$binary" ]; then
+			atf_skip "Build $binary in DHCP6_TEST_BINDIR"
+		fi
 		[ -x "$bindir/$binary" ] || atf_fail "Missing $bindir/$binary"
 	done
 	export LC_ALL=C
@@ -296,8 +308,8 @@ lifecycle_setup()
 	printf '%s\n' "$net" > topology
 	server="wd6s_${net##*.}"
 	client="wd6c_${net##*.}"
-	setup_root "$net/server" dhcp6s "$bindir/dhcp6s"
-	setup_root "$net/client" dhcp6c "$bindir/dhcp6c"
+	setup_root "$net/server" dhcp6s "$bindir/$server_binary"
+	setup_root "$net/client" dhcp6c "$bindir/$client_binary"
 	net_setup
 }
 
@@ -340,12 +352,11 @@ host client {
 };
 END
 	start_server
-
-	wait_until 15 "installation of the IA_NA address and IA_PD subnet" leases_acquired
 }
 
 verify_lease_lifecycle()
 {
+	wait_until 15 "installation of the IA_NA address and IA_PD subnet" leases_acquired
 	printf '%s\n' 'Acquired IA_NA 2001:db8:1::10 and IA_PD 2001:db8:2::/56'
 	net_show_leases
 	wait_until 30 "Renew and update of both bindings" leases_renewed
@@ -401,6 +412,60 @@ capture_verify()
 	fi
 }
 
+retry_wire_ready()
+{
+	tcpdump -tt -nn -x -r "$net/client.pcap" 2>/dev/null |
+	    awk -v diagnostics=1 -f "$(atf_get_srcdir)/refused-retry-wire.awk" > "$net/retry-wire.txt"
+}
+
+verify_refused_retry()
+{
+	local artifacts
+
+	wait_until 15 "PD acquisition while IA_NA is refused" \
+	    has_addresses "$client" "$downstream" '^2001:db8:2:1:' 1 64
+	has_addresses "$client" "$client_if" '^2001:db8:1::10$' 0 ||
+	    fail_with_logs "The refused IA_NA address was installed"
+	wait_until 65 "bounded Solicit and a later exchange with PD renewed" retry_wire_ready
+	wait_until 5 "dhcp6c applying the PD renewal" grep -Fq \
+	    'update a prefix 2001:db8:2::/56' "$net/client.log"
+	has_addresses "$client" "$downstream" '^2001:db8:2:1:' 1 64 ||
+	    fail_with_logs "The delegated prefix did not survive the retry"
+	has_addresses "$client" "$client_if" '^2001:db8:1::10$' 0 ||
+	    fail_with_logs "The refused IA_NA address was installed during the retry"
+	if grep -q 'remove a site prefix' "$net/client.log"; then
+		fail_with_logs "The delegated prefix was removed during the retry"
+	fi
+	atf_check -s exit:0 -o inline:'2\n' grep -Fc \
+	    'retry test timer: requested 3600s, running 8s' "$net/client.log"
+	kill -INT "$capture_pid" || fail_with_logs "Could not stop tcpdump"
+	wait "$capture_pid" || fail_with_logs "tcpdump exited unsuccessfully"
+	retry_wire_ready || fail_with_logs "The final capture differs from the live capture"
+	cat "$net/retry-wire.txt"
+	printf '%s\n' 'PD remained configured while IA_NA was refused'
+	artifacts=$(atf_config_get dhcp6_artifacts "")
+	if [ -n "$artifacts" ]; then
+		atf_check -s exit:0 cp "$net/client.pcap" "$artifacts/refused-retry.pcap"
+		atf_check -s exit:0 cp "$net/retry-wire.txt" "$artifacts/refused-retry-wire.txt"
+		grep -E 'retry test timer|no responses were received|soliciting refused IAs|update a prefix' \
+		    "$net/client.log" > "$artifacts/refused-retry-timers.txt"
+	fi
+}
+
+refused_retry_body()
+{
+	lifecycle_setup dhcp6c-retry-test dhcp6s-retry-test
+	setup_root "$net/server" tcpdump "$(command -v tcpdump)"
+	capture_start 'ip6 and udp and ((src port 546 and dst port 547) or dst port 546)'
+	start_lease_exchange
+	verify_refused_retry
+}
+
+refused_retry_cleanup()
+{
+	iana_iapd_cleanup
+}
+
 iana_iapd_body()
 {
 	lifecycle_setup
@@ -443,4 +508,5 @@ atf_init_test_cases()
 	atf_add_test_case dns_search_reload
 	atf_add_test_case interface_restart
 	atf_add_test_case raw_option
+	atf_add_test_case refused_retry
 }
