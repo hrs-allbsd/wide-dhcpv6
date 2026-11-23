@@ -63,6 +63,13 @@ refused_retry_head()
 	lifecycle_head capture
 }
 
+atf_test_case control_key cleanup
+control_key_head()
+{
+	atf_set "descr" "Open the DHCPv6 server control port only with a valid key"
+	lifecycle_head
+}
+
 load_network_backend()
 {
 	case "$(uname -s)" in
@@ -466,6 +473,83 @@ refused_retry_cleanup()
 	iana_iapd_cleanup
 }
 
+control_key_body()
+{
+	lifecycle_setup
+	wait_until 10 "IPv6 link-local addresses" link_ready
+	verify_control_keys
+}
+
+control_key_cleanup()
+{
+	iana_iapd_cleanup
+}
+
+control_listener()
+{
+	local status
+
+	"$net_exec" "$server" "$net/server" /control-port-check && return 0
+	status=$?
+	[ "$status" -eq 1 ] || fail_with_logs "Could not probe the control port"
+	return 1
+}
+
+verify_control_keys()
+{
+	local kind expected control_port=15547 pidfile="$net/server/run/server.pid"
+	local key="$net/server/run/control.key"
+
+	if [ ! -x "$bindir/control-port-check" ]; then
+		atf_skip "Build control-port-check in DHCP6_TEST_BINDIR"
+	fi
+	setup_root "$net/server" control-port-check
+	net_loopback "$server"
+	: > "$net/server/dhcp6s.conf"
+	for kind in empty whitespace invalid valid; do
+		case "$kind" in
+		empty)
+			: > "$key"
+			expected='control key file is empty'
+			;;
+		whitespace)
+			printf ' \t\n' > "$key"
+			expected='decoded control key is empty'
+			;;
+		invalid)
+			printf '%s\n' 'not*base64' > "$key"
+			expected='failed to decode base64 string'
+			;;
+		valid)
+			printf '%s\n' 'Y3RsLXRlc3Qta2V5' > "$key"
+			;;
+		esac
+		rm -f "$pidfile"
+		"$net_exec" "$server" "$net/server" /dhcp6s -D -f -c /dhcp6s.conf \
+		    -p "$control_port" -P /run/server.pid -k /run/control.key \
+		    "$server_if" > "$net/server.log" 2>&1 &
+		server_pid=$!
+		if [ "$kind" = valid ]; then
+			wait_until 10 "valid key control listener" control_listener
+			kill -0 "$server_pid" || fail_with_logs "dhcp6s exited with valid key"
+			printf '%s\n' 'valid key: control listener present'
+			# The ATF cleanup stops the last daemon with its network context.
+			return
+		else
+			wait_until 10 "server startup without a control port" daemon_started \
+			    "$server_pid" dhcp6s "$pidfile" 'skip opening control port' "$net/server.log"
+			grep -Fq "$expected" "$net/server.log" ||
+			    fail_with_logs "Missing diagnostic for $kind key"
+			if control_listener; then
+				fail_with_logs "Unexpected listener for $kind key"
+			fi
+			printf '%s key: no control listener (%s)\n' "$kind" "$expected"
+		fi
+		kill -TERM "$server_pid" || fail_with_logs "Could not stop dhcp6s"
+		wait "$server_pid" || fail_with_logs "dhcp6s did not exit successfully"
+	done
+}
+
 iana_iapd_body()
 {
 	lifecycle_setup
@@ -509,4 +593,5 @@ atf_init_test_cases()
 	atf_add_test_case interface_restart
 	atf_add_test_case raw_option
 	atf_add_test_case refused_retry
+	atf_add_test_case control_key
 }

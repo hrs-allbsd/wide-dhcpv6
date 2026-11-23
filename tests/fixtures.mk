@@ -3,12 +3,16 @@
 
 # GNU make entry point for the lifecycle test fixtures.
 .PHONY: fixtures
-fixtures: dhcp6c dhcp6s dhcp6ctl dhcp6c-retry-test dhcp6s-retry-test
+fixtures: dhcp6c dhcp6s dhcp6ctl control-port-check \
+	dhcp6c-retry-test dhcp6s-retry-test
 
 include Makefile
 
 .DELETE_ON_ERROR:
 .INTERMEDIATE: dhcp6s-retry-test.c
+
+control-port-check: tests/control-port-check.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
 dhcp6c-retry-test: $(CLIENTOBJS) $(LIBOBJS) tests/refused-retry-clock.o
 	$(CC) $(LDFLAGS) -Wl,--wrap=dhcp6_set_timer -o $@ $^ $(LIBS)
