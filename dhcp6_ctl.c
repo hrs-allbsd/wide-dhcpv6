@@ -165,14 +165,21 @@ dhcp6_ctl_authinit(const char *keyfile, struct keyinfo **keyinfop, int *digestle
 		    strerror(errno));
 		return (-1);
 	}
-	if (fgets(line, sizeof(line), fp) == NULL && ferror(fp)) {
-		d_printf(LOG_ERR, FNAME, "failed to read key file: %s",
-		    strerror(errno));
+	if (fgets(line, sizeof(line), fp) == NULL) {
+		if (ferror(fp))
+			d_printf(LOG_ERR, FNAME, "failed to read key file: %s",
+			    strerror(errno));
+		else
+			d_printf(LOG_INFO, FNAME, "control key file is empty");
 		goto fail;
 	}
 	if ((secretlen = base64_decodestring(line, secret, sizeof(secret)))
 	    < 0) {
 		d_printf(LOG_ERR, FNAME, "failed to decode base64 string");
+		goto fail;
+	}
+	if (secretlen == 0) {
+		d_printf(LOG_INFO, FNAME, "decoded control key is empty");
 		goto fail;
 	}
 	if ((ctlkey = malloc(sizeof(*ctlkey))) == NULL) {
