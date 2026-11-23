@@ -1,0 +1,42 @@
+--- dhcp6s.c
++++ dhcp6s.c
+@@ -167,6 +167,7 @@
+ static int react_request(struct dhcp6_if *, struct in6_pktinfo *,
+     struct dhcp6 *, ssize_t, struct dhcp6_optinfo *, struct sockaddr *, int,
+     struct relayinfolist *);
++static int sf33_na_renewed;
+ static int react_renew(struct dhcp6_if *, struct in6_pktinfo *,
+     struct dhcp6 *, ssize_t, struct dhcp6_optinfo *, struct sockaddr *, int,
+     struct relayinfolist *);
+@@ -1334,7 +1335,7 @@
+ 			 * removing the adopted addresses from the list.
+ 			 * (dhcp6s cannot create IAs without client config)
+ 			 */
+-			if (client_conf &&
++			if (!sf33_na_renewed && client_conf &&
+ 			    make_ia(iana, &conflist, &roptinfo.iana_list,
+ 			    client_conf, do_binding) > 0)
+ 				found = 1;
+@@ -1699,6 +1700,11 @@
+ 	 * Locates the client's binding and verifies that the information
+ 	 * from the client matches the information stored for that client.
+ 	 */
++	if (!TAILQ_EMPTY(&optinfo->iana_list)) {
++		if (sf33_na_renewed)
++			goto end;
++		sf33_na_renewed = 1;
++	}
+ 	for (ia = TAILQ_FIRST(&optinfo->iapd_list); ia;
+ 	    ia = TAILQ_NEXT(ia, link)) {
+ 		if (update_ia(DH6_RENEW, ia, &roptinfo.iapd_list, optinfo))
+@@ -1742,6 +1748,10 @@
+ 	struct dhcp6_optinfo roptinfo;
+ 	struct dhcp6_listval *ia;
+ 	struct host_conf *client_conf;
++
++	/* The fixture grants one IA_NA Renew and lets it expire afterward. */
++	if (sf33_na_renewed && !TAILQ_EMPTY(&optinfo->iana_list))
++		return (0);
+ 
+ 	/* message validation according to Section 15.7 of RFC3315 */
+ 
