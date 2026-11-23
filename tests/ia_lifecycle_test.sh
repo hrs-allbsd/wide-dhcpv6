@@ -8,6 +8,24 @@ iana_iapd_head()
 	lifecycle_head
 }
 
+atf_test_case dns_search_reload cleanup
+dns_search_reload_head()
+{
+	atf_set "descr" "Receive DNS servers and search domains before and after reload"
+	lifecycle_head
+}
+
+dns_search_reload_body()
+{
+	lifecycle_setup
+	verify_dns_search_reload
+}
+
+dns_search_reload_cleanup()
+{
+	iana_iapd_cleanup
+}
+
 load_network_backend()
 {
 	case "$(uname -s)" in
@@ -101,13 +119,80 @@ leases_acquired()
 
 start_server()
 {
+	local key="${1:-/run/no-control-key}" ready="${2-skip opening control port}"
+
 	rm -f "$net/server/run/server.pid" ||
 	    fail_with_logs "Could not remove the previous server PID file"
 	"$net_exec" "$server" "$net/server" /dhcp6s -D -f -c /dhcp6s.conf \
-	    -P /run/server.pid -k /run/no-control-key "$server_if" > "$net/server.log" 2>&1 &
+	    -P /run/server.pid -k "$key" "$server_if" > "$net/server.log" 2>&1 &
 	server_pid=$!
 	wait_until 10 "server startup" daemon_started "$server_pid" dhcp6s \
-	    "$net/server/run/server.pid" 'skip opening control port' "$net/server.log"
+	    "$net/server/run/server.pid" "$ready" "$net/server.log"
+}
+
+query_dns_options()
+{
+	local expected="$1" result="$net/client/run/dns-options" received
+
+	rm -f "$result" || fail_with_logs "Could not remove the old DNS result"
+	"$net_exec" "$client" "$net/client" /dhcp6c -D -f -c /dhcp6c.conf \
+	    -p /run/client.pid -k /run/no-control-key "$client_if" > "$net/client.log" 2>&1 &
+	client_pid=$!
+	wait_until 12 "DNS options in an Information-request Reply" grep -qs '^search=' "$result"
+	received=$(sed 's/[[:blank:]]*$//' "$result")
+	printf '%s\n' "$received"
+	[ "$received" = "$expected" ] || fail_with_logs "Unexpected DNS options"
+	kill -TERM "$client_pid" || fail_with_logs "Could not stop dhcp6c"
+	wait "$client_pid" || fail_with_logs "dhcp6c did not exit successfully"
+}
+
+verify_dns_search_reload()
+{
+	local server_config="$net/server/dhcp6s.conf"
+
+	wait_until 10 "IPv6 link-local addresses" link_ready
+
+	mkdir -p "$net/client/bin" || atf_fail "Could not create the client bin directory"
+	setup_root "$net/client" bin/sh /bin/sh
+	setup_root "$net/server" dhcp6ctl
+	net_loopback "$server"
+	printf '%s\n' 'Y3RsLXRlc3Qta2V5' > "$net/server/run/control.key"
+	cat > "$net/client/dhcp6c.conf" <<END
+interface $client_if {
+	information-only;
+	request domain-name-servers;
+	request domain-name;
+	script "/dns-options";
+};
+END
+	cat > "$net/client/dns-options" <<'END'
+#!/bin/sh
+[ -n "$new_domain_name" ] || exit 0
+printf 'servers=%s\nsearch=%s\n' "$new_domain_name_servers" "$new_domain_name" \
+    > /run/dns-options
+END
+	chmod 0755 "$net/client/dns-options" || atf_fail "Could not set hook permissions"
+	cat > "$server_config" <<'END'
+option domain-name-servers 2001:db8::35 2001:db8::36;
+option domain-name "campus.example";
+option domain-name "lab.example.";
+END
+	start_server /run/control.key ''
+	printf '%s\n' 'Initial DNS options'
+	query_dns_options 'servers=2001:db8::35 2001:db8::36
+search=campus.example. lab.example.'
+
+	cat > "$server_config" <<'END'
+option domain-name-servers 2001:db8::54;
+option domain-name "updated.example";
+END
+	atf_check -s exit:0 "$net_exec" "$server" "$net/server" /dhcp6ctl -S -k /run/control.key reload
+	wait_until 10 "server to reload its DNS configuration" \
+	    grep -Fq 'server reloaded' "$net/server.log"
+	printf '%s\n' 'Reloaded DNS options'
+	query_dns_options 'servers=2001:db8::54
+search=updated.example.'
+	kill -0 "$server_pid" || fail_with_logs "Server process changed during reload"
 }
 
 leases_renewed()
@@ -127,9 +212,9 @@ leases_released()
 	    has_addresses "$client" "$downstream" '^2001:db8:2:1:' 0
 }
 
-iana_iapd_body()
+lifecycle_setup()
 {
-	local binary duid
+	local binary
 
 	load_network_backend || atf_skip "Requires FreeBSD or Linux"
 	net_require
@@ -152,6 +237,13 @@ iana_iapd_body()
 	setup_root "$net/server" dhcp6s "$bindir/dhcp6s"
 	setup_root "$net/client" dhcp6c "$bindir/dhcp6c"
 	net_setup
+}
+
+iana_iapd_body()
+{
+	local duid
+
+	lifecycle_setup
 	wait_until 10 "IPv6 link-local addresses" link_ready
 
 	cat > "$net/client/dhcp6c.conf" <<END
@@ -212,4 +304,5 @@ iana_iapd_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case iana_iapd
+	atf_add_test_case dns_search_reload
 }
