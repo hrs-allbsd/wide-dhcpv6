@@ -336,10 +336,8 @@ cleanup(iac)
 	struct iactl_pd *iac_pd = (struct iactl_pd *)iac;
 	struct siteprefix *sp;
 
-	while ((sp = TAILQ_FIRST(&iac_pd->siteprefix_head)) != NULL) {
-		TAILQ_REMOVE(&iac_pd->siteprefix_head, sp, link);
+	while ((sp = TAILQ_FIRST(&iac_pd->siteprefix_head)) != NULL)
 		remove_siteprefix(sp);
-	}
 
 	free(iac);
 }
