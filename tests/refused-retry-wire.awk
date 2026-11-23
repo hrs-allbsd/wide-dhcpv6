@@ -11,6 +11,36 @@ function uint(hex,    chars, i, n)
 	return n
 }
 
+# Advertise test mode reuses the packet decoder.
+function advertise_packet(kind, xid, stamp, na, pd,    matching)
+{
+	matching = advertise == "na" ? na && !pd : pd && !na
+	if (kind == 1 && !partial_offer) {
+		if (!na || !pd || (solicit_xid != "" && solicit_xid != xid))
+			bad = 1
+		solicit_xid = xid
+		latest_solicit = stamp
+		if (empty_offers == 1 && retry_gap == 0)
+			retry_gap = stamp - rejected_solicit
+	}
+	if (kind == 2 && xid == solicit_xid) {
+		if (!na && !pd) {
+			empty_offers++
+			if (empty_offers == 1)
+				rejected_solicit = latest_solicit
+		} else if (matching)
+			partial_offer = 1
+	}
+	if (kind == 3) {
+		if (!partial_offer || !matching)
+			bad = 1
+		else
+			partial_request = xid
+	}
+	if (kind == 7 && matching && partial_request == xid)
+		partial_reply = 1
+}
+
 function packet(frame, stamp,    kind, xid, p, size, code, len, q, subcode, sublen, na, pd, denied, prefix, renew)
 {
 	if (frame == "")
@@ -62,6 +92,10 @@ function packet(frame, stamp,    kind, xid, p, size, code, len, q, subcode, subl
 	}
 	printf "%.6f %s %s NA=%d PD=%d NoAddrsAvail=%d prefix=%d\n",
 	    stamp, names[kind], xid, na, pd, denied, prefix
+	if (advertise != "") {
+		advertise_packet(kind, xid, stamp, na, pd)
+		return
+	}
 	if (kind == 1 && na && pd)
 		initial = 1
 	if (kind == 3 && na && pd)
@@ -105,6 +139,13 @@ BEGIN {
 
 END {
 	packet(frame, stamp)
+	if (advertise != "") {
+		printf "Advertise %s: empty=%d same-XID retransmit gap=%.3fs partial Request/Reply=%d\n",
+		    advertise, empty_offers, retry_gap, partial_reply
+		exit (bad || empty_offers < 2 || retry_gap < 0.9 ||
+		    retry_gap > 5 || (stage == "empty" && partial_offer) ||
+		    (stage == "complete" && !partial_reply))
+	}
 	if (diagnostics)
 		printf "initial=%d refused=%.6f renewed=%d exchanges=%d malformed=%d\n",
 		    initial, refused, renewed, exchanges, bad

@@ -1,0 +1,23 @@
+--- dhcp6s.c
++++ dhcp6s.c
+@@ -1351,6 +1351,20 @@
+ 		}
+ 	}
+ 
++	/* Test fixture: first send an empty Advertise, then a partial offer. */
++	if (access("/run/offer-na", F_OK) == 0) {
++		dhcp6_clear_list(&roptinfo.iapd_list);
++		roptinfo.pref = DH6OPT_PREF_MAX;
++	} else if (access("/run/offer-pd", F_OK) == 0) {
++		dhcp6_clear_list(&roptinfo.iana_list);
++		roptinfo.pref = DH6OPT_PREF_MAX;
++	} else {
++		dhcp6_clear_list(&roptinfo.iana_list);
++		dhcp6_clear_list(&roptinfo.iapd_list);
++		roptinfo.pref = 0;
++	}
++	dhcp6_clear_list(&roptinfo.stcode_list);
++
+ 	if (optinfo->rapidcommit && (ifp->allow_flags & DHCIFF_RAPID_COMMIT)) {
+ 		/*
+ 		 * If the client has included a Rapid Commit option and the

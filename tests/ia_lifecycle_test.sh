@@ -70,6 +70,36 @@ control_key_head()
 	lifecycle_head
 }
 
+atf_test_case advertise_na_only cleanup
+advertise_na_only_head()
+{
+	atf_set "descr" "Ignore empty Advertise and accept an IA_NA-only offer"
+	lifecycle_head capture
+}
+advertise_na_only_body()
+{
+	advertise_body na
+}
+advertise_na_only_cleanup()
+{
+	iana_iapd_cleanup
+}
+
+atf_test_case advertise_pd_only cleanup
+advertise_pd_only_head()
+{
+	atf_set "descr" "Ignore empty Advertise and accept an IA_PD-only offer"
+	lifecycle_head capture
+}
+advertise_pd_only_body()
+{
+	advertise_body pd
+}
+advertise_pd_only_cleanup()
+{
+	iana_iapd_cleanup
+}
+
 load_network_backend()
 {
 	case "$(uname -s)" in
@@ -99,7 +129,7 @@ fail_with_logs()
 {
 	local log
 
-	for log in "$net/server.log" "$net/client.log" "$net/capture.log" "$net/retry-wire.txt"; do
+	for log in "$net/server.log" "$net/client.log" "$net/capture.log" "$net/retry-wire.txt" "$net/advertise-wire.txt"; do
 		if [ -f "$log" ]; then
 			printf '\n--- %s ---\n' "${log##*/}" >&2
 			tail -60 "$log" >&2
@@ -550,6 +580,64 @@ verify_control_keys()
 	done
 }
 
+advertise_wire_ready()
+{
+	local kind="$1" stage="$2"
+
+	tcpdump -tt -nn -x -r "$net/client.pcap" 2>/dev/null |
+	    awk -v advertise="$kind" -v stage="$stage" \
+	    -f "$(atf_get_srcdir)/refused-retry-wire.awk" > "$net/advertise-wire.txt"
+}
+
+verify_advertise()
+{
+	local kind="$1" artifacts
+
+	wait_until 10 "two empty Advertises and a Solicit retransmission" \
+	    advertise_wire_ready "$kind" empty
+	grep -Fq 'advertise contains no usable lease for a requested IA' "$net/client.log" ||
+	    fail_with_logs "The client did not reject an empty Advertise"
+	if grep -Fq "reset timer for $client_if to" "$net/client.log"; then
+		fail_with_logs "The empty Advertise adjusted the Solicit timer"
+	fi
+
+	touch "$net/server/run/offer-$kind"
+	case "$kind" in
+	na)
+		wait_until 15 "IA_NA address" has_addresses "$client" "$client_if" '^2001:db8:1::10$' 1 128
+		has_addresses "$client" "$downstream" '^2001:db8:2:1:' 0 ||
+		    fail_with_logs "An unoffered delegated prefix was configured"
+		;;
+	pd)
+		wait_until 15 "IA_PD subnet" has_addresses "$client" "$downstream" '^2001:db8:2:1:' 1 64
+		has_addresses "$client" "$client_if" '^2001:db8:1::10$' 0 ||
+		    fail_with_logs "An unoffered IA_NA address was configured"
+		;;
+	esac
+	wait_until 5 "partial Request and Reply on the wire" advertise_wire_ready "$kind" complete
+	kill -INT "$capture_pid" || fail_with_logs "Could not stop tcpdump"
+	wait "$capture_pid" || fail_with_logs "tcpdump exited unsuccessfully"
+	advertise_wire_ready "$kind" complete || fail_with_logs "The final capture differs"
+	cat "$net/advertise-wire.txt"
+	printf '%s\n' 'No Advertise-driven Solicit timer restart'
+	artifacts=$(atf_config_get dhcp6_artifacts "")
+	if [ -n "$artifacts" ]; then
+		atf_check -s exit:0 cp "$net/client.pcap" "$artifacts/advertise-$kind.pcap"
+		atf_check -s exit:0 cp "$net/advertise-wire.txt" "$artifacts/advertise-$kind.txt"
+	fi
+}
+
+advertise_body()
+{
+	local kind="$1"
+
+	lifecycle_setup dhcp6c dhcp6s-advertise-test
+	setup_root "$net/server" tcpdump "$(command -v tcpdump)"
+	capture_start 'ip6 and udp and ((src port 546 and dst port 547) or dst port 546)'
+	start_lease_exchange
+	verify_advertise "$kind"
+}
+
 iana_iapd_body()
 {
 	lifecycle_setup
@@ -594,4 +682,6 @@ atf_init_test_cases()
 	atf_add_test_case raw_option
 	atf_add_test_case refused_retry
 	atf_add_test_case control_key
+	atf_add_test_case advertise_na_only
+	atf_add_test_case advertise_pd_only
 }
