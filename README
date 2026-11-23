@@ -9,6 +9,9 @@ Improvements include the follwowing:
 - Update ifid on interface restart, it may have changed.
 - "-n" flag to prevent address release from being sent to the DHCP server
   upon restart.
+- Test fixture for FreeBSD and Linux.
+
+Bug reports should be reported to this Github repository.
 
 Original README:
 
