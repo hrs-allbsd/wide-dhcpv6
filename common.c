@@ -379,7 +379,7 @@ dhcp6_set_addr(type, list, p, optep, len)
 	struct dhcp6opt **p, *optep;
 	int *len;
 {
-	struct in6_addr *in6;
+	struct in6_addr *in6, *addr;
 	struct dhcp6_listval *d;
 	int optlen;
 
@@ -393,8 +393,9 @@ dhcp6_set_addr(type, list, p, optep, len)
 		    dhcp6optstr(type));
 		return -1;
 	}
-	for (d = TAILQ_FIRST(list); d; d = TAILQ_NEXT(d, link), in6++)
-		memcpy(in6, &d->val_addr6, sizeof(*in6));
+	addr = in6;
+	for (d = TAILQ_FIRST(list); d; d = TAILQ_NEXT(d, link), addr++)
+		memcpy(addr, &d->val_addr6, sizeof(*addr));
 	if (copy_option(type, optlen, (char *)in6, p, optep, len) != 0) {
 		free(in6);
 		return -1;
