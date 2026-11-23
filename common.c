@@ -3245,7 +3245,8 @@ ifaddrconf(cmd, ifname, addr, plen, pltime, vltime)
 
 	switch(cmd) {
 	case IFADDRCONF_ADD:
-		cmdstr = "add";
+	case IFADDRCONF_UPDATE:
+		cmdstr = cmd == IFADDRCONF_ADD ? "add" : "update";
 #ifdef __KAME__
 		ioctl_cmd = SIOCAIFADDR_IN6;
 #endif
@@ -3305,6 +3306,13 @@ ifaddrconf(cmd, ifname, addr, plen, pltime, vltime)
 #endif
 
 	if (ioctl(s, ioctl_cmd, &req)) {
+#ifdef __linux__
+		/* The legacy Linux add ioctl has no address lifetimes. */
+		if (cmd == IFADDRCONF_UPDATE && errno == EEXIST) {
+			close(s);
+			return (0);
+		}
+#endif
 		d_printf(LOG_NOTICE, FNAME, "failed to %s an address on %s: %s",
 		    cmdstr, ifname, strerror(errno));
 		close(s);

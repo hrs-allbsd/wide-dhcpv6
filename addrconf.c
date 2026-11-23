@@ -170,9 +170,9 @@ update_address(struct ia *ia, struct dhcp6_statefuladdr *addr,
 	    sacreate ? "create" : "update",
 	    in6addr2str(&addr->addr, 0), addr->pltime, addr->vltime);
 
-	if (sa->addr.vltime != 0)
-		if (na_ifaddrconf(IFADDRCONF_ADD, sa) < 0)
-			return (-1);
+	if (sa->addr.vltime != 0 &&
+	    na_ifaddrconf(sacreate ? IFADDRCONF_ADD : IFADDRCONF_UPDATE, sa) < 0)
+		return (-1);
 
 	/*
 	 * If the new vltime is 0, this address immediately expires.
