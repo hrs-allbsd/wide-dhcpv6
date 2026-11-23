@@ -1561,6 +1561,36 @@ client6_recv(void)
 }
 
 static int
+advertise_has_lease(struct dhcp6_list *requested, struct dhcp6_list *offered,
+    dhcp6_listval_type_t type)
+{
+	struct dhcp6_listval *want, *ia, *lease;
+
+	TAILQ_FOREACH(want, requested, link) {
+		ia = dhcp6_find_listval(offered, type, &want->val_ia, 0);
+		if (ia == NULL ||
+		    (ia->val_ia.t2 != 0 && ia->val_ia.t1 > ia->val_ia.t2))
+			continue;
+
+		TAILQ_FOREACH(lease, &ia->sublist, link) {
+			if (type == DHCP6_LISTVAL_IANA &&
+			    lease->type == DHCP6_LISTVAL_STATEFULADDR6 &&
+			    lease->val_statefuladdr6.vltime != 0 &&
+			    lease->val_statefuladdr6.pltime <=
+			    lease->val_statefuladdr6.vltime &&
+			    !IN6_IS_ADDR_UNSPECIFIED(&lease->val_statefuladdr6.addr))
+				return (1);
+			if (type == DHCP6_LISTVAL_IAPD &&
+			    lease->type == DHCP6_LISTVAL_PREFIX6 &&
+			    lease->val_prefix6.vltime != 0 &&
+			    lease->val_prefix6.pltime <= lease->val_prefix6.vltime)
+				return (1);
+		}
+	}
+	return (0);
+}
+
+static int
 client6_recvadvert(struct dhcp6_if *ifp, struct dhcp6 *dh6,
     ssize_t len, struct dhcp6_optinfo *optinfo)
 {
@@ -1568,6 +1598,7 @@ client6_recvadvert(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 	struct dhcp6_event *ev;
 	struct dhcp6_eventdata *evd;
 	struct authparam *authparam = NULL, authparam0;
+	int requested_ia = 0, usable_lease = 0;
 
 	/* find the corresponding event based on the received xid */
 	ev = find_event_withid(ifp, ntohl(dh6->dh6_xid) & DH6_XIDMASK);
@@ -1613,15 +1644,21 @@ client6_recvadvert(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 	 */
 	for (evd = TAILQ_FIRST(&ev->data_list); evd;
 	    evd = TAILQ_NEXT(evd, link)) {
+		struct dhcp6_list *requested = evd->data, *offered;
+		dhcp6_listval_type_t iatype;
 		uint16_t stcode;
 		const char *stcodestr;
 
 		switch (evd->type) {
 		case DHCP6_EVDATA_IAPD:
+			offered = &optinfo->iapd_list;
+			iatype = DHCP6_LISTVAL_IAPD;
 			stcode = DH6OPT_STCODE_NOPREFIXAVAIL;
 			stcodestr = "NoPrefixAvail";
 			break;
 		case DHCP6_EVDATA_IANA:
+			offered = &optinfo->iana_list;
+			iatype = DHCP6_LISTVAL_IANA;
 			stcode = DH6OPT_STCODE_NOADDRSAVAIL;
 			stcodestr = "NoAddrsAvail";
 			break;
@@ -1634,6 +1671,20 @@ client6_recvadvert(struct dhcp6_if *ifp, struct dhcp6 *dh6,
 			    "advertise contains %s status", stcodestr);
 			return (-1);
 		}
+		if (ev->state == DHCP6S_SOLICIT && requested != NULL &&
+		    !TAILQ_EMPTY(requested)) {
+			requested_ia = 1;
+			if (!usable_lease)
+				usable_lease = advertise_has_lease(requested,
+				    offered, iatype);
+		}
+	}
+
+	/* Reject before server selection or any retransmission timer change. */
+	if (ev->state == DHCP6S_SOLICIT && requested_ia && !usable_lease) {
+		d_printf(LOG_INFO, FNAME,
+		    "advertise contains no usable lease for a requested IA");
+		return (-1);
 	}
 
 	if (ev->state != DHCP6S_SOLICIT ||
