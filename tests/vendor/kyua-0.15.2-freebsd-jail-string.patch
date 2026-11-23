@@ -1,0 +1,7 @@
+--- a/os/freebsd/utils/jail.cpp
++++ b/os/freebsd/utils/jail.cpp
+@@ -47,3 +47,4 @@
++#include <string.h>
+ #include <fstream>
+ #include <iostream>
+ #include <regex>
