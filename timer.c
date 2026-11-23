@@ -50,6 +50,7 @@
 #define MILLION 1000000
 
 static LIST_HEAD(, dhcp6_timer) timer_head;
+static struct dhcp6_timer *next_timer;
 static struct timeval tm_sentinel;
 static struct timeval tm_max = {0x7fffffff, 0x7fffffff};
 
@@ -60,6 +61,7 @@ void
 dhcp6_timer_init()
 {
 	LIST_INIT(&timer_head);
+	next_timer = NULL;
 	tm_sentinel = tm_max;
 }
 
@@ -94,6 +96,8 @@ void
 dhcp6_remove_timer(timer)
 	struct dhcp6_timer **timer;
 {
+	if (next_timer == *timer)
+		next_timer = LIST_NEXT(*timer, link);
 	LIST_REMOVE(*timer, link);
 	free(*timer);
 	*timer = NULL;
@@ -128,14 +132,14 @@ dhcp6_check_timer()
 {
 	static struct timeval returnval;
 	struct timeval now;
-	struct dhcp6_timer *tm, *tm_next;
+	struct dhcp6_timer *tm;
 
 	gettimeofday(&now, NULL);
 
 	tm_sentinel = tm_max;
-	for (tm = LIST_FIRST(&timer_head); tm; tm = tm_next) {
-		tm_next = LIST_NEXT(tm, link);
-		
+	for (tm = LIST_FIRST(&timer_head); tm; tm = next_timer) {
+		next_timer = LIST_NEXT(tm, link);
+
 		if (TIMEVAL_LEQ(tm->tm, now)) {
 			if ((*tm->expire)(tm->expire_data) == NULL)
 				continue; /* timer has been freed */
