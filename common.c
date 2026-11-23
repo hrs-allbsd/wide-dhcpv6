@@ -2202,7 +2202,7 @@ copy_option(uint16_t type, uint16_t len, void *val,
 {
 	struct dhcp6opt *opt = *optp, opth;
 
-	if ((char *)ep - (char *)optp < (intptr_t)(len + sizeof(struct dhcp6opt))) {
+	if ((char *)ep - (char *)opt < (intptr_t)(len + sizeof(opth))) {
 		d_printf(LOG_INFO, FNAME,
 		    "option buffer short for %s", dhcp6optstr(type));
 		return (-1);
