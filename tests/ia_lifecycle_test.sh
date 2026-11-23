@@ -26,6 +26,28 @@ dns_search_reload_cleanup()
 	iana_iapd_cleanup
 }
 
+atf_test_case interface_restart cleanup
+interface_restart_head()
+{
+	atf_set "descr" "Reacquire IA_NA and IA_PD after replacing the interface"
+	lifecycle_head
+}
+
+interface_restart_body()
+{
+	lifecycle_setup
+	setup_root "$net/client" dhcp6ctl
+	net_loopback "$client"
+	printf '%s\n' 'Y3RsLXRlc3Qta2V5' > "$net/client/run/control.key"
+	start_lease_exchange /run/control.key
+	verify_interface_restart
+}
+
+interface_restart_cleanup()
+{
+	iana_iapd_cleanup
+}
+
 load_network_backend()
 {
 	case "$(uname -s)" in
@@ -195,6 +217,36 @@ search=updated.example.'
 	kill -0 "$server_pid" || fail_with_logs "Server process changed during reload"
 }
 
+verify_interface_restart()
+{
+	local old_scope new_scope pid
+
+	old_scope=$(net_link_scope)
+	[ -n "$old_scope" ] || fail_with_logs "Missing original link scope"
+	atf_check -s exit:0 "$net_exec" "$client" "$net/client" /dhcp6ctl -C -k /run/control.key \
+	    stop interface "$client_if"
+	wait_until 10 "release of both leases before replacing the link" leases_released
+	kill -TERM "$server_pid" || fail_with_logs "Could not stop dhcp6s"
+	wait "$server_pid" || fail_with_logs "dhcp6s did not exit successfully"
+
+	net_replace_uplink
+	wait_until 10 "replacement link-local addresses" link_ready
+	new_scope=$(net_link_scope)
+	[ -n "$new_scope" ] && [ "$old_scope" != "$new_scope" ] ||
+	    fail_with_logs "Replacement did not change the interface index"
+	printf 'Replaced %s with link scope %s -> %s\n' "$client_if" "$old_scope" "$new_scope"
+
+	start_server
+	atf_check -s exit:0 "$net_exec" "$client" "$net/client" /dhcp6ctl -C -k /run/control.key \
+	    start interface "$client_if"
+	wait_until 15 "IA_NA and IA_PD on the replacement interface" leases_acquired
+	read -r pid < "$net/client/run/client.pid"
+	[ "$pid" = "$client_pid" ] && kill -0 "$client_pid" 2>/dev/null ||
+	    fail_with_logs "Client process changed during the interface restart"
+	printf '%s\n' 'Reacquired IA_NA and IA_PD with the same client process'
+	net_show_leases
+}
+
 leases_renewed()
 {
 	grep -Fq 'received renew from ' "$net/server.log" &&
@@ -239,11 +291,10 @@ lifecycle_setup()
 	net_setup
 }
 
-iana_iapd_body()
+start_lease_exchange()
 {
-	local duid
+	local key="${1:-/run/no-control-key}" duid
 
-	lifecycle_setup
 	wait_until 10 "IPv6 link-local addresses" link_ready
 
 	cat > "$net/client/dhcp6c.conf" <<END
@@ -261,7 +312,7 @@ id-assoc pd 1 {
 };
 END
 	"$net_exec" "$client" "$net/client" /dhcp6c -D -f -c /dhcp6c.conf \
-	    -p /run/client.pid -k /run/no-control-key "$client_if" > "$net/client.log" 2>&1 &
+	    -p /run/client.pid -k "$key" "$client_if" > "$net/client.log" 2>&1 &
 	client_pid=$!
 	wait_until 10 "client startup" daemon_started "$client_pid" dhcp6c \
 	    "$net/client/run/client.pid" 'reset a timer' "$net/client.log"
@@ -280,6 +331,12 @@ END
 	start_server
 
 	wait_until 15 "installation of the IA_NA address and IA_PD subnet" leases_acquired
+}
+
+iana_iapd_body()
+{
+	lifecycle_setup
+	start_lease_exchange
 	printf '%s\n' 'Acquired IA_NA 2001:db8:1::10 and IA_PD 2001:db8:2::/56'
 	net_show_leases
 	wait_until 30 "Renew and update of both bindings" leases_renewed
@@ -305,4 +362,5 @@ atf_init_test_cases()
 {
 	atf_add_test_case iana_iapd
 	atf_add_test_case dns_search_reload
+	atf_add_test_case interface_restart
 }
