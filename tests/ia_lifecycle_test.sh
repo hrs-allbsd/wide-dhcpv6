@@ -48,6 +48,13 @@ interface_restart_cleanup()
 	iana_iapd_cleanup
 }
 
+atf_test_case raw_option cleanup
+raw_option_head()
+{
+	atf_set "descr" "Check raw option bytes on the wire during the DHCPv6 lifecycle"
+	lifecycle_head capture
+}
+
 load_network_backend()
 {
 	case "$(uname -s)" in
@@ -64,6 +71,9 @@ lifecycle_head()
 
 	if load_network_backend; then
 		programs="$programs $net_required_programs"
+		if [ "${1:-}" = capture ]; then
+			programs="$programs tcpdump $net_capture_programs"
+		fi
 	fi
 	atf_set "require.user" "root"
 	atf_set "require.progs" "$programs"
@@ -74,7 +84,7 @@ fail_with_logs()
 {
 	local log
 
-	for log in "$net/server.log" "$net/client.log"; do
+	for log in "$net/server.log" "$net/client.log" "$net/capture.log"; do
 		if [ -f "$log" ]; then
 			printf '\n--- %s ---\n' "${log##*/}" >&2
 			tail -60 "$log" >&2
@@ -293,7 +303,7 @@ lifecycle_setup()
 
 start_lease_exchange()
 {
-	local key="${1:-/run/no-control-key}" duid
+	local key="${1:-/run/no-control-key}" options="${2:-}" duid
 
 	wait_until 10 "IPv6 link-local addresses" link_ready
 
@@ -301,6 +311,7 @@ start_lease_exchange()
 interface $client_if {
 	send ia-na 0;
 	send ia-pd 1;
+	$options
 };
 id-assoc na 0 {
 };
@@ -333,10 +344,8 @@ END
 	wait_until 15 "installation of the IA_NA address and IA_PD subnet" leases_acquired
 }
 
-iana_iapd_body()
+verify_lease_lifecycle()
 {
-	lifecycle_setup
-	start_lease_exchange
 	printf '%s\n' 'Acquired IA_NA 2001:db8:1::10 and IA_PD 2001:db8:2::/56'
 	net_show_leases
 	wait_until 30 "Renew and update of both bindings" leases_renewed
@@ -346,6 +355,76 @@ iana_iapd_body()
 	wait_until 10 "server Release and removal of both client addresses" leases_released
 	printf '%s\n' 'Server released both bindings and the client removed both addresses'
 	wait "$client_pid" || fail_with_logs "dhcp6c did not exit successfully"
+}
+
+capture_start()
+{
+	local filter="$1"
+	net_prepare_capture
+	if [ -n "$net_capture_user" ]; then
+		set -- -Z "$net_capture_user"
+	else
+		set --
+	fi
+	"$net_exec" "$server" "$net/server" /tcpdump "$@" -n -U --immediate-mode \
+	    -s 0 -i "$server_if" -w - \
+	    "$filter" \
+	    > "$net/client.pcap" 2> "$net/capture.log" &
+	capture_pid=$!
+	wait_until 10 "tcpdump capture to start" grep -Fq 'listening on' "$net/capture.log"
+}
+
+capture_ready()
+{
+	tcpdump -nn -x -r "$net/client.pcap" 2>/dev/null |
+	    awk -f "$(atf_get_srcdir)/raw-option-wire.awk" > /dev/null
+}
+
+capture_verify()
+{
+	local artifacts
+
+	wait_until 5 "all four DHCPv6 message types in the capture" capture_ready
+	kill -INT "$capture_pid" || fail_with_logs "Could not stop tcpdump"
+	wait "$capture_pid" || fail_with_logs "tcpdump exited unsuccessfully"
+	tcpdump -nn -x -r "$net/client.pcap" > "$net/client.hex" ||
+	    fail_with_logs "Could not decode captured packets"
+	awk -f "$(atf_get_srcdir)/raw-option-wire.awk" "$net/client.hex" ||
+	    fail_with_logs "Unexpected raw options in captured DHCPv6 packets"
+	if grep -Eiq '00:03:61:62:63|00:00:04:0e:00:03:61:62:63' "$net/client.log"; then
+		fail_with_logs "Raw payload written to the client log"
+	fi
+	artifacts=$(atf_config_get dhcp6_artifacts "")
+	if [ -n "$artifacts" ]; then
+		atf_check -s exit:0 cp "$net/client.pcap" "$artifacts/raw-option.pcap"
+		atf_check -s exit:0 cp "$net/client.hex" "$artifacts/raw-option-wire.txt"
+	fi
+}
+
+iana_iapd_body()
+{
+	lifecycle_setup
+	start_lease_exchange
+	verify_lease_lifecycle
+}
+
+raw_option_body()
+{
+	local options='send raw-option 15 00:03:61:62:63,
+	    raw-option 16 00:00:04:0e:00:03:61:62:63;
+	send raw-option 65535 "";'
+
+	lifecycle_setup
+	setup_root "$net/server" tcpdump "$(command -v tcpdump)"
+	capture_start 'ip6 and udp and src port 546 and dst port 547'
+	start_lease_exchange /run/no-control-key "$options"
+	verify_lease_lifecycle
+	capture_verify
+}
+
+raw_option_cleanup()
+{
+	iana_iapd_cleanup
 }
 
 iana_iapd_cleanup()
@@ -363,4 +442,5 @@ atf_init_test_cases()
 	atf_add_test_case iana_iapd
 	atf_add_test_case dns_search_reload
 	atf_add_test_case interface_restart
+	atf_add_test_case raw_option
 }
