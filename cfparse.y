@@ -148,7 +148,6 @@ void cf_init(void);
 %type <str> POOLNAME
 %type <num> NUMBER duration authproto authalg authrdm RAW_CODE
 %type <str> RAW_DATA
-%destructor { free($$); } RAW_DATA
 %type <list> declaration declarations dhcpoption ifparam ifparams
 %type <list> address_list address_list_ent dhcpoption_list
 %type <list> iapdconf_list iapdconf prefix_interface
