@@ -619,8 +619,6 @@ ac_includes_default="\
 #endif"
 
 ac_subst_vars='LTLIBOBJS
-group
-user
 localdbdir
 LIBOBJS
 EGREP
@@ -1314,8 +1312,8 @@ Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
   --with-localdbdir=VALUE where to put local DB files
-  --with-user=USER	set the owner of the programs
-  --with-group=GROUP	set the group owner of the programs
+  --with-user=USER        obsolete; ignored
+  --with-group=GROUP      obsolete; ignored
 
 Some influential environment variables:
   CC          C compiler command
@@ -4744,32 +4742,17 @@ $as_echo "#define HAVE_SA_LEN 1" >>confdefs.h
 
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking the owner of the programs" >&5
-$as_echo_n "checking the owner of the programs... " >&6; }
 
 # Check whether --with-user was given.
 if test "${with_user+set}" = set; then :
-  withval=$with_user; user="$withval"
-else
-  user="bin"
+  withval=$with_user;
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $user" >&5
-$as_echo "$user" >&6; }
-
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking the group owner of the programs" >&5
-$as_echo_n "checking the group owner of the programs... " >&6; }
 
 # Check whether --with-group was given.
 if test "${with_group+set}" = set; then :
-  withval=$with_group; group="$withval"
-else
-  group="bin"
+  withval=$with_group;
 fi
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $group" >&5
-$as_echo "$group" >&6; }
 
 
 for ac_header in stdarg.h

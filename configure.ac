@@ -232,21 +232,11 @@ if test "$ts_cv_sa_len" = yes; then
 	AC_DEFINE([HAVE_SA_LEN], 1, [Define to 1 if you have a length field in struct sockaddr])
 fi
 
-dnl configure the ownership of the programs
-AC_MSG_CHECKING(the owner of the programs)
-AC_ARG_WITH(user,
-[  --with-user=USER	set the owner of the programs],
-    user="$withval", user="bin")
-AC_MSG_RESULT($user)
-AC_SUBST(user)
-
-dnl configure the group ownership of the programs
-AC_MSG_CHECKING(the group owner of the programs)
-AC_ARG_WITH(group,
-[  --with-group=GROUP	set the group owner of the programs],
-    group="$withval", group="bin")
-AC_MSG_RESULT($group)
-AC_SUBST(group)
+dnl Retain the old switches for packagers that still pass them.
+AC_ARG_WITH([user],
+  [AS_HELP_STRING([--with-user=USER], [obsolete; ignored])])
+AC_ARG_WITH([group],
+  [AS_HELP_STRING([--with-group=GROUP], [obsolete; ignored])])
 
 AC_CHECK_HEADERS(stdarg.h)
 

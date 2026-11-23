@@ -33,8 +33,6 @@ prefix=	@prefix@
 srcdir=	@srcdir@
 sysconfdir= @sysconfdir@
 localdbdir= @localdbdir@
-user= @user@
-group= @group@
 
 CFLAGS=	@CFLAGS@ @DEFS@ -DSYSCONFDIR=\"${sysconfdir}\" \
 	-DLOCALDBDIR=\"${localdbdir}\"
