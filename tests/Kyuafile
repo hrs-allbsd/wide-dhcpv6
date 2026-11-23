@@ -1,0 +1,3 @@
+syntax(2)
+
+test_suite("wide-dhcpv6")
